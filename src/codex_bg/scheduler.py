@@ -218,24 +218,34 @@ class Scheduler:
     def _run_scheduled_plugin_source(self, loaded: LoadedPlugin) -> None:
         while not self._stop_event.is_set():
             if self._plugin_due(loaded.config):
-                try:
-                    self.debug(f"scheduled source running plugin {loaded.config.name}")
-                    context = PluginContext(self.app, loaded.config, self.runner, self.debug)
-                    self._submit_events(loaded.instance.generate_events(context))
-                    last_run = self.store.mark_plugin_run(loaded.config.name)
-                    self.debug(f"plugin {loaded.config.name} run recorded at {last_run}")
-                except Exception as exc:
-                    self.debug(f"plugin source {loaded.config.name} failed: {exc}")
+                self._run_scheduled_plugin_once(loaded)
             self._stop_event.wait(self._plugin_sleep_seconds(loaded.config))
+
+    def _run_scheduled_plugin_once(self, loaded: LoadedPlugin) -> None:
+        try:
+            self.debug(f"scheduled source running plugin {loaded.config.name}")
+            last_run = self.store.mark_plugin_run(loaded.config.name)
+            self.debug(f"plugin {loaded.config.name} run attempt recorded at {last_run}")
+            context = PluginContext(self.app, loaded.config, self.runner, self.debug)
+            self._submit_events(loaded.instance.generate_events(context))
+        except Exception as exc:
+            self.debug(f"plugin source {loaded.config.name} failed: {exc}")
 
     def _worker_loop(self) -> None:
         while not self._stop_event.is_set():
             while self.work_one():
                 pass
-            with self._condition:
-                if not self._stop_event.is_set():
-                    self.debug("worker waiting for event notification")
-                    self._condition.wait()
+            self._wait_for_work_notification()
+
+    def _wait_for_work_notification(self) -> None:
+        with self._condition:
+            if self._stop_event.is_set():
+                return
+            if self.store.has_pending_work():
+                self.debug("worker found queued work before waiting")
+                return
+            self.debug("worker waiting for event notification")
+            self._condition.wait(timeout=60)
 
     def _plugin_interval(self, plugin_config: PluginConfig) -> int:
         if plugin_config.interval_seconds is not None:

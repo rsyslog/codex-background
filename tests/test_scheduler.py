@@ -52,6 +52,19 @@ class MemoryPlugin:
         return None
 
 
+class FailingPlugin:
+    name = "failing"
+
+    def generate_events(self, context: PluginContext):
+        raise RuntimeError("poll failed")
+
+    def handle_result(self, context: PluginContext, task: Task, result: AiResult) -> None:
+        return None
+
+    def cleanup(self, context: PluginContext, subject_id: str) -> None:
+        return None
+
+
 class SchedulerTests(unittest.TestCase):
     def test_once_generates_runs_and_callbacks(self) -> None:
         with tempfile.TemporaryDirectory() as tmp:
@@ -104,6 +117,60 @@ class SchedulerTests(unittest.TestCase):
             scheduler.once()
 
             self.assertEqual(plugin.generate_calls, 2)
+
+    def test_failed_scheduled_plugin_run_records_attempt_for_backoff(self) -> None:
+        with tempfile.TemporaryDirectory() as tmp:
+            plugin = FailingPlugin()
+            module = types.ModuleType("test_failing_plugin")
+            module.create_plugin = lambda config: plugin
+            import sys
+
+            sys.modules["test_failing_plugin"] = module
+            config = PluginConfig(
+                name="failing",
+                module="test_failing_plugin",
+                interval_seconds=900,
+            )
+            app = AppConfig(
+                database_path=Path(tmp) / "state.sqlite3",
+                workdir_root=Path(tmp) / "workdirs",
+                plugins=[config],
+            )
+            scheduler = Scheduler(app, store=Store(app.database_path), runner=FakeRunner())  # type: ignore[arg-type]
+            loaded = scheduler.plugins["failing"]
+
+            scheduler._run_scheduled_plugin_once(loaded)
+
+            self.assertIsNotNone(scheduler.store.plugin_last_run("failing"))
+            self.assertFalse(scheduler._plugin_due(config))
+
+    def test_worker_wait_rechecks_durable_queue_before_waiting(self) -> None:
+        with tempfile.TemporaryDirectory() as tmp:
+            plugin = MemoryPlugin()
+            module = types.ModuleType("test_memory_plugin_wait")
+            module.create_plugin = lambda config: plugin
+            import sys
+
+            sys.modules["test_memory_plugin_wait"] = module
+            app = AppConfig(
+                database_path=Path(tmp) / "state.sqlite3",
+                workdir_root=Path(tmp) / "workdirs",
+                plugins=[PluginConfig(name="memory", module="test_memory_plugin_wait")],
+            )
+            scheduler = Scheduler(app, store=Store(app.database_path), runner=FakeRunner())  # type: ignore[arg-type]
+            scheduler.store.enqueue_event(
+                Event(
+                    plugin_name="memory",
+                    event_type="test",
+                    external_id="1",
+                    subject_id="subject",
+                    prompt="Return JSON.",
+                )
+            )
+
+            scheduler._wait_for_work_notification()
+
+            self.assertTrue(scheduler.store.has_pending_work())
 
 
 if __name__ == "__main__":

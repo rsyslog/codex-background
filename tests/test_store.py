@@ -23,6 +23,26 @@ class StoreTests(unittest.TestCase):
             self.assertTrue(store.enqueue_event(event))
             self.assertFalse(store.enqueue_event(event))
 
+    def test_has_pending_work_tracks_queued_and_leased_states(self) -> None:
+        with tempfile.TemporaryDirectory() as tmp:
+            store = Store(Path(tmp) / "state.sqlite3")
+
+            self.assertFalse(store.has_pending_work())
+            store.enqueue_event(
+                Event(
+                    plugin_name="p",
+                    event_type="triage",
+                    external_id="1",
+                    subject_id="repo#1",
+                    prompt="triage",
+                )
+            )
+            self.assertTrue(store.has_pending_work())
+
+            task = store.lease_next_task("worker")
+            assert task is not None
+            self.assertFalse(store.has_pending_work())
+
     def test_callback_failed_reuses_latest_result(self) -> None:
         with tempfile.TemporaryDirectory() as tmp:
             store = Store(Path(tmp) / "state.sqlite3")

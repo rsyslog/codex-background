@@ -37,6 +37,7 @@ custom_value = "kept"
             app = load_config(config)
 
         self.assertEqual(app.plugins[0].interval_seconds, 60)
+        self.assertEqual(app.plugins[0].base_dir, Path(tmp))
         self.assertEqual(app.plugins[0].values, {"custom_value": "kept"})
 
 

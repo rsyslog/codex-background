@@ -140,6 +140,18 @@ class Store:
             )
         return _task_from_row(row)
 
+    def has_pending_work(self) -> bool:
+        with self._lock:
+            row = self.conn.execute(
+                """
+                SELECT 1 FROM tasks
+                WHERE status IN (?, ?)
+                LIMIT 1
+                """,
+                (TaskStatus.QUEUED.value, TaskStatus.CALLBACK_FAILED.value),
+            ).fetchone()
+        return row is not None
+
     def get_task(self, task_id: int) -> Task:
         with self._lock:
             row = self.conn.execute("SELECT * FROM tasks WHERE id = ?", (task_id,)).fetchone()

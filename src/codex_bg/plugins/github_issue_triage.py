@@ -35,7 +35,9 @@ class RepoTriageConfig:
 class GitHubIssueTriagePlugin:
     def __init__(self, config: PluginConfig):
         self.name = config.name
-        self.repos = [_repo_config(item) for item in config.values.get("repos", [])]
+        self.repos = [
+            _repo_config(item, config.base_dir) for item in config.values.get("repos", [])
+        ]
 
     def generate_events(self, context: PluginContext) -> list[Event]:
         events: list[Event] = []
@@ -146,11 +148,11 @@ def create_plugin(config: PluginConfig) -> GitHubIssueTriagePlugin:
     return GitHubIssueTriagePlugin(config)
 
 
-def _repo_config(item: dict[str, Any]) -> RepoTriageConfig:
+def _repo_config(item: dict[str, Any], base_dir: Path) -> RepoTriageConfig:
     return RepoTriageConfig(
         repo=item["repo"],
         workspace_key=item.get("workspace_key"),
-        instructions_file=item["instructions_file"],
+        instructions_file=str(_resolve_instructions_file(base_dir, item["instructions_file"])),
         triaged_label=item.get("triaged_label", "codex-triaged"),
         allowed_labels=set(item.get("allowed_labels", [])),
         allowed_milestones=set(item.get("allowed_milestones", [])),
@@ -158,6 +160,13 @@ def _repo_config(item: dict[str, Any]) -> RepoTriageConfig:
         max_issue_age_days=_optional_int(item.get("max_issue_age_days")),
         sandbox=item.get("sandbox", "read-only"),
     )
+
+
+def _resolve_instructions_file(base_dir: Path, value: str) -> Path:
+    path = Path(value).expanduser()
+    if path.is_absolute():
+        return path
+    return (base_dir / path).resolve()
 
 
 def _list_open_issues(context: PluginContext, repo: RepoTriageConfig) -> list[dict[str, Any]]:
@@ -313,7 +322,13 @@ def _allowed_values(values: Any, allowed: set[str]) -> list[str]:
 
 
 def _comment_marker(task: Task) -> str:
-    return f"<!-- codex-bg:triage:{task.dedupe_key} -->"
+    repo = str(task.payload.get("repo", ""))
+    issue = task.payload.get("issue", {})
+    if isinstance(issue, dict) and repo:
+        number = issue.get("number")
+        if number is not None:
+            return f"<!-- codex-bg:triage:{repo}#{number} -->"
+    return f"<!-- codex-bg:triage:{task.subject_id} -->"
 
 
 def _post_comment_once(

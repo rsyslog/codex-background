@@ -25,6 +25,7 @@ class PluginConfig:
     name: str
     module: str
     interval_seconds: int | None = None
+    base_dir: Path = Path(".")
     values: dict[str, Any] = field(default_factory=dict)
 
 
@@ -47,6 +48,7 @@ def load_config(path: str | Path) -> AppConfig:
     with config_path.open("rb") as fh:
         raw = tomllib.load(fh)
 
+    base_dir = config_path.parent.resolve()
     codex = CodexConfig(**raw.get("codex", {}))
     workspaces = {
         item["key"]: WorkspaceConfig(
@@ -68,11 +70,11 @@ def load_config(path: str | Path) -> AppConfig:
                 name=name,
                 module=module,
                 interval_seconds=int(interval_seconds) if interval_seconds is not None else None,
+                base_dir=base_dir,
                 values=values,
             )
         )
 
-    base_dir = config_path.parent
     return AppConfig(
         database_path=_resolve(base_dir, raw.get("database_path", "./codex-bg.sqlite3")),
         workdir_root=_resolve(base_dir, raw.get("workdir_root", "./workdirs")),
