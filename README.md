@@ -2,6 +2,14 @@
 
 Plugin-driven scheduler for running Codex CLI tasks in the background.
 
+This project is a very early implementation-stage proof of concept. It can run
+AI tooling against repository content and, when configured for real runs, can
+post GitHub comments or edit issue metadata. Nothing is guaranteed: not
+correctness, safety, availability, or suitability for production. Use it at
+your own risk, start with `dry_run = true`, and keep credentials tightly scoped.
+Feedback and review are welcome, especially around safety and operational
+failure modes.
+
 The initial plugin polls GitHub issues, triages new untriaged issues with Codex,
 then posts findings and applies allowlisted metadata through `gh`.
 
@@ -9,12 +17,35 @@ then posts findings and applies allowlisted metadata through `gh`.
 
 ```bash
 python -m pip install -e .
+cp scheduler.example.toml scheduler.toml
 codex-bg once --config scheduler.toml --debug
-codex-bg run --config scheduler.toml --debug
 codex-bg status --config scheduler.toml
 ```
 
 `gh`, `git`, and `codex` must be installed and authenticated for real runs.
+Do not run against an important repository until the dry-run output is
+acceptable. Debug mode prints prompts and AI replies, which may include issue
+contents and local paths; keep those logs private.
+
+To run continuously after validation:
+
+```bash
+codex-bg run --config scheduler.toml --debug
+```
+
+## Safety Notes
+
+- `dry_run = true` is the recommended starting mode.
+- The built-in defaults use a read-only Codex sandbox and on-request approval.
+- Use a dedicated GitHub identity or token with the smallest useful
+  permissions.
+- The scheduler stores task payloads, prompts, model replies, run artifacts, and
+  SQLite state locally. These can contain private issue or repository content.
+- Real `scheduler.toml` files, databases, logs, artifacts, and workdirs should
+  not be committed.
+- The GitHub issue triage plugin constrains labels and milestones to configured
+  allowlists, but AI output still needs review before trusting it on important
+  repositories.
 
 ## Development checks
 
@@ -54,3 +85,7 @@ Supported source modes:
 Shared repository checkouts are read-only context under `workspace_root`.
 Plugins or Codex tasks that need code changes must create separate git
 worktrees under the scheduler workdir instead of mutating the shared checkout.
+
+## License
+
+Apache License 2.0. See `LICENSE`.

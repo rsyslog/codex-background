@@ -8,8 +8,8 @@ from typing import Any
 
 @dataclass(frozen=True)
 class CodexConfig:
-    sandbox: str = "danger-full-access"
-    approval_policy: str = "never"
+    sandbox: str = "read-only"
+    approval_policy: str = "on-request"
     model: str | None = None
 
 

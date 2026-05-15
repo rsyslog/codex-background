@@ -8,6 +8,13 @@ version = "0.1.0"
 description = "Plugin-driven Codex task scheduler"
 requires-python = ">=3.12"
 readme = "README.md"
+license = {text = "Apache-2.0"}
+classifiers = [
+    "Development Status :: 2 - Pre-Alpha",
+    "License :: OSI Approved :: Apache Software License",
+    "Programming Language :: Python :: 3",
+    "Programming Language :: Python :: 3.12",
+]
 
 [project.scripts]
 codex-bg = "codex_bg.cli:main"

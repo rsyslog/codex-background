@@ -10,4 +10,6 @@ htmlcov/
 build/
 dist/
 codex-bg.sqlite3
+scheduler.toml
 workdirs/
+*.log

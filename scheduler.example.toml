@@ -1,0 +1,38 @@
+# Example codex-bg configuration.
+#
+# Copy this to scheduler.toml and adjust it for your own test repository.
+# Keep real scheduler.toml files private if they contain private repository
+# names, labels, paths, or operational policy.
+
+database_path = "./codex-bg.sqlite3"
+workdir_root = "./workdirs"
+workspace_root = "~/aibot"
+poll_interval_seconds = 900
+workspace_refresh_interval_seconds = 900
+debug = false
+dry_run = true
+
+[codex]
+sandbox = "read-only"
+approval_policy = "on-request"
+
+[[workspaces]]
+key = "example-repo"
+repo = "https://github.com/example/example-repo.git"
+branch = "main"
+
+[[plugins]]
+name = "issue_triage"
+module = "codex_bg.plugins.github_issue_triage"
+interval_seconds = 900
+
+[[plugins.repos]]
+repo = "example/example-repo"
+workspace_key = "example-repo"
+instructions_file = "./triage-instructions.example.md"
+triaged_label = "AI Triaged"
+allowed_labels = ["bug", "documentation", "enhancement", "question"]
+allowed_milestones = []
+limit = 30
+max_issue_age_days = 7
+sandbox = "read-only"
