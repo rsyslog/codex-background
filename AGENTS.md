@@ -8,8 +8,13 @@ Before committing Python changes, run the project validation suite:
 .venv/bin/ruff check .
 .venv/bin/bandit -c pyproject.toml -r src
 git ls-files -z | xargs -0 .venv/bin/detect-secrets-hook --baseline .secrets.baseline
+.venv/bin/pip-audit -r requirements-dev.txt
+.venv/bin/actionlint
 PYTHONPATH=src python3 -m unittest discover -s tests
 python3 -m compileall -q src tests
+.venv/bin/python -m build
+.venv/bin/python -m pip install --force-reinstall dist/*.whl
+.venv/bin/codex-bg --help
 ```
 
 If a check cannot be run, state the reason in the final response and in the
