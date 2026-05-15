@@ -16,6 +16,17 @@ codex-bg status --config scheduler.toml
 
 `gh`, `git`, and `codex` must be installed and authenticated for real runs.
 
+## Development checks
+
+```bash
+python3 -m venv .venv
+.venv/bin/python -m pip install -r requirements-dev.txt
+.venv/bin/ruff check .
+.venv/bin/bandit -c pyproject.toml -r src
+PYTHONPATH=src python3 -m unittest discover -s tests
+python3 -m compileall -q src tests
+```
+
 Plugins can run on independent schedules by setting `interval_seconds` on each
 `[[plugins]]` entry. If omitted, the global `poll_interval_seconds` is used.
 Set `interval_seconds = 0` to run a plugin every scheduler cycle.

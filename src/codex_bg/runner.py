@@ -1,8 +1,10 @@
 from __future__ import annotations
 
+# subprocess calls are constrained to explicit argv lists and used for trusted
+# local CLIs configured by the scheduler (gh, git, codex).
+import subprocess  # nosec B404
 from dataclasses import dataclass
 from pathlib import Path
-import subprocess
 
 
 @dataclass(frozen=True)

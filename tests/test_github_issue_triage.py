@@ -1,9 +1,9 @@
 from __future__ import annotations
 
-from datetime import UTC, datetime, timedelta
 import json
 import tempfile
 import unittest
+from datetime import UTC, datetime, timedelta
 from pathlib import Path
 
 from codex_bg.config import AppConfig, PluginConfig
@@ -175,8 +175,13 @@ class GitHubIssueTriageTests(unittest.TestCase):
 
         self.assertEqual(len(runner.comments), 1)
         self.assertIn(AI_REVIEW_FOOTER, runner.comments[0])
-        self.assertIn(["gh", "issue", "edit", "1", "--repo", "owner/repo", "--add-label", "bug"], runner.calls)
-        self.assertIn(["gh", "issue", "edit", "1", "--repo", "owner/repo", "--milestone", "backlog"], runner.calls)
+        self.assertIn(
+            ["gh", "issue", "edit", "1", "--repo", "owner/repo", "--add-label", "bug"], runner.calls
+        )
+        self.assertIn(
+            ["gh", "issue", "edit", "1", "--repo", "owner/repo", "--milestone", "backlog"],
+            runner.calls,
+        )
         self.assertIn(
             ["gh", "issue", "edit", "1", "--repo", "owner/repo", "--add-label", "codex-triaged"],
             runner.calls,
@@ -269,7 +274,9 @@ class GitHubIssueTriageTests(unittest.TestCase):
         plugin.handle_result(PluginContext(AppConfig(), config, runner), task, result)  # type: ignore[arg-type]
 
         self.assertIn("References:", runner.comments[0])
-        self.assertIn("https://docs.rsyslog.com/configuration/modules/imfile.html", runner.comments[0])
+        self.assertIn(
+            "https://docs.rsyslog.com/configuration/modules/imfile.html", runner.comments[0]
+        )
         self.assertTrue(runner.comments[0].rstrip().endswith(AI_REVIEW_FOOTER))
 
     def test_dry_run_does_not_post_comment_or_edit_issue(self) -> None:
@@ -301,7 +308,11 @@ class GitHubIssueTriageTests(unittest.TestCase):
             task_id=1,
             status="complete",
             final_message="fallback",
-            structured={"comment": "This looks like a bug.", "labels": ["bug"], "milestone": "backlog"},
+            structured={
+                "comment": "This looks like a bug.",
+                "labels": ["bug"],
+                "milestone": "backlog",
+            },
             codex_session_id="session-1",
             artifact_dir="artifacts",
         )
@@ -313,7 +324,9 @@ class GitHubIssueTriageTests(unittest.TestCase):
         )
 
         self.assertEqual(runner.comments, [])
-        self.assertNotIn(["gh", "issue", "edit", "1", "--repo", "owner/repo", "--add-label", "bug"], runner.calls)
+        self.assertNotIn(
+            ["gh", "issue", "edit", "1", "--repo", "owner/repo", "--add-label", "bug"], runner.calls
+        )
         self.assertNotIn(
             ["gh", "issue", "edit", "1", "--repo", "owner/repo", "--add-label", "codex-triaged"],
             runner.calls,

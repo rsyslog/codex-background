@@ -1,10 +1,10 @@
 from __future__ import annotations
 
+import io
 import tempfile
 import unittest
 from pathlib import Path
 from unittest.mock import patch
-import io
 
 from codex_bg import cli
 

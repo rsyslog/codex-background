@@ -1,8 +1,9 @@
 from __future__ import annotations
 
-from pathlib import Path
-from typing import Any, Callable
 import json
+from collections.abc import Callable
+from pathlib import Path
+from typing import Any
 
 from codex_bg.config import CodexConfig
 from codex_bg.models import AiResult, Task
@@ -33,7 +34,10 @@ class CodexExecutor:
         prompt_file = artifact_dir / "prompt.txt"
 
         _write_artifacts(artifact_dir, task.executor_options.get("artifact_files", {}))
-        output_schema = _write_output_schema(artifact_dir, task.executor_options.get("output_schema"))
+        output_schema = _write_output_schema(
+            artifact_dir,
+            task.executor_options.get("output_schema"),
+        )
         prompt = _build_prompt(task, artifact_dir, cwd, self.workdir_root)
         prompt_file.write_text(prompt, encoding="utf-8")
         sandbox = str(task.executor_options.get("sandbox", self.config.sandbox))
@@ -86,7 +90,8 @@ class CodexExecutor:
         structured = _extract_structured(final_message)
         self.debug(f"codex final reply for task {task.id}:\n{final_message}")
         if structured:
-            self.debug(f"codex structured result for task {task.id}:\n{json.dumps(structured, indent=2, sort_keys=True)}")
+            structured_json = json.dumps(structured, indent=2, sort_keys=True)
+            self.debug(f"codex structured result for task {task.id}:\n{structured_json}")
         status = "complete" if completed.returncode == 0 else "failed"
         error = None if completed.returncode == 0 else completed.stderr.strip()
         return AiResult(
@@ -119,14 +124,18 @@ def _build_prompt(
             f"{file_lines}"
         )
     if cwd:
+        worktree_root = workdir_root / "worktrees"
         prompt = (
             f"{prompt}\n\n"
             "Repository workspace policy:\n"
             f"- The repository at `{cwd}` is shared read-only context for AI-bot workflows.\n"
-            "- Do not edit files, create commits, create branches, or otherwise mutate that shared checkout.\n"
-            f"- If code changes are required, create or use a separate git worktree under `{workdir_root / 'worktrees'}` "
+            "- Do not edit files, create commits, create branches, or otherwise mutate "
+            "that shared checkout.\n"
+            "- If code changes are required, create or use a separate git worktree "
+            f"under `{worktree_root}` "
             "and make changes only there.\n"
-            "- For triage-only tasks, inspect the shared checkout and docs as needed, but leave it unchanged."
+            "- For triage-only tasks, inspect the shared checkout and docs as needed, "
+            "but leave it unchanged."
         )
     return (
         f"You are handling scheduler task {task.id} from plugin {task.plugin_name}.\n"

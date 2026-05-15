@@ -72,7 +72,15 @@ class WorkspaceTests(unittest.TestCase):
             refreshed = WorkspaceManager(app, runner).refresh_due_workspaces()  # type: ignore[arg-type]
 
             self.assertEqual(refreshed, 1)
-            self.assertIn(["git", "clone", "https://example.invalid/repo.git", str(root / "workspaces" / "repo")], runner.calls)
+            self.assertIn(
+                [
+                    "git",
+                    "clone",
+                    "https://example.invalid/repo.git",
+                    str(root / "workspaces" / "repo"),
+                ],
+                runner.calls,
+            )
             self.assertTrue((root / "state" / "refresh" / "repo.stamp").exists())
             self.assertFalse((root / "workspaces" / "repo" / ".codex-bg-refresh").exists())
 

@@ -1,17 +1,17 @@
 from __future__ import annotations
 
+import threading
+import uuid
+from collections.abc import Iterable
 from dataclasses import dataclass
 from datetime import UTC, datetime
 from importlib import import_module
-from time import sleep
-from typing import Any, Iterable
-import threading
-import uuid
+from typing import Any
 
 from codex_bg.config import AppConfig, PluginConfig
 from codex_bg.executor import CodexExecutor
 from codex_bg.models import AiResult, Task, TaskStatus
-from codex_bg.plugin import EventSink, PluginContext, SchedulerPlugin
+from codex_bg.plugin import PluginContext, SchedulerPlugin
 from codex_bg.runner import Runner
 from codex_bg.store import Store
 from codex_bg.workspace import WorkspaceError, WorkspaceManager
@@ -36,7 +36,9 @@ class Scheduler:
         self.runner = runner or Runner()
         self.workspace_manager = WorkspaceManager(app, self.runner, debug=self.debug)
         self.executor = CodexExecutor(self.runner, app.workdir_root, app.codex, debug=self.debug)
-        self.debug(f"loading plugins: {', '.join(plugin.name for plugin in app.plugins) or '(none)'}")
+        self.debug(
+            f"loading plugins: {', '.join(plugin.name for plugin in app.plugins) or '(none)'}"
+        )
         self.plugins = load_plugins(app)
         self.lease_owner = f"worker-{uuid.uuid4()}"
         self._condition = threading.Condition()
@@ -90,7 +92,9 @@ class Scheduler:
             self.debug("no queued task available")
             return False
 
-        self.debug(f"leased task {task.id} {task.plugin_name}/{task.event_type} for {task.subject_id}")
+        self.debug(
+            f"leased task {task.id} {task.plugin_name}/{task.event_type} for {task.subject_id}"
+        )
         plugin = self.plugins[task.plugin_name]
         context = PluginContext(self.app, plugin.config, self.runner, self.debug)
         if task.status == TaskStatus.CALLBACK_FAILED:
@@ -153,7 +157,9 @@ class Scheduler:
         count = 0
         for event in events:
             if self.store.enqueue_event(event):
-                self.debug(f"enqueued {event.event_type} from {event.plugin_name} for {event.subject_id}")
+                self.debug(
+                    f"enqueued {event.event_type} from {event.plugin_name} for {event.subject_id}"
+                )
                 count += 1
             else:
                 self.debug(f"skipped duplicate event for {event.subject_id}")
@@ -272,7 +278,7 @@ def load_plugins(app: AppConfig) -> dict[str, LoadedPlugin]:
     for plugin_config in app.plugins:
         module = import_module(plugin_config.module)
         factory = getattr(module, "create_plugin", None)
-        plugin = factory(plugin_config) if factory else getattr(module, "Plugin")()
+        plugin = factory(plugin_config) if factory else module.Plugin()
         loaded[plugin_config.name] = LoadedPlugin(plugin_config, plugin)
     return loaded
 

@@ -1,9 +1,9 @@
 from __future__ import annotations
 
 import argparse
-from dataclasses import replace
 import json
 import sys
+from dataclasses import replace
 
 from codex_bg.config import load_config
 from codex_bg.scheduler import Scheduler

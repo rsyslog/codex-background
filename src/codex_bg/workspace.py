@@ -1,9 +1,9 @@
 from __future__ import annotations
 
-from pathlib import Path
-from typing import Callable
-import time
 import re
+import time
+from collections.abc import Callable
+from pathlib import Path
 
 from codex_bg.config import AppConfig, WorkspaceConfig
 from codex_bg.models import Task

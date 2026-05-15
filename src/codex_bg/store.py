@@ -1,10 +1,10 @@
 from __future__ import annotations
 
-from pathlib import Path
-from typing import Any
 import json
 import sqlite3
 import threading
+from pathlib import Path
+from typing import Any
 
 from codex_bg.models import AiResult, Event, Task, TaskStatus, utcnow
 
@@ -89,7 +89,8 @@ class Store:
                     """
                     INSERT INTO tasks (
                         plugin_name, event_type, external_id, subject_id, prompt,
-                        payload_json, executor_options_json, workspace_key, dedupe_key, priority, status,
+                        payload_json, executor_options_json, workspace_key,
+                        dedupe_key, priority, status,
                         created_at, updated_at
                     )
                     VALUES (?, ?, ?, ?, ?, ?, ?, ?, ?, ?, ?, ?, ?)

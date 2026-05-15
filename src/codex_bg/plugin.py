@@ -1,7 +1,8 @@
 from __future__ import annotations
 
+from collections.abc import Callable, Iterable
 from dataclasses import dataclass
-from typing import Callable, Iterable, Protocol
+from typing import Protocol
 
 from codex_bg.config import AppConfig, PluginConfig
 from codex_bg.models import AiResult, Event, Task
@@ -23,11 +24,9 @@ class SchedulerPlugin(Protocol):
         """Return currently available events for scheduled/plugin-polled sources."""
         ...
 
-    def handle_result(self, context: PluginContext, task: Task, result: AiResult) -> None:
-        ...
+    def handle_result(self, context: PluginContext, task: Task, result: AiResult) -> None: ...
 
-    def cleanup(self, context: PluginContext, subject_id: str) -> None:
-        ...
+    def cleanup(self, context: PluginContext, subject_id: str) -> None: ...
 
 
 class EventSink(Protocol):
@@ -37,5 +36,4 @@ class EventSink(Protocol):
     as work arrives. The scheduler persists those events and wakes the worker.
     """
 
-    def submit(self, events: Iterable[Event]) -> int:
-        ...
+    def submit(self, events: Iterable[Event]) -> int: ...
