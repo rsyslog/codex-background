@@ -57,6 +57,7 @@ python3 -m venv .venv
 git ls-files -z | xargs -0 .venv/bin/detect-secrets-hook --baseline .secrets.baseline
 .venv/bin/pip-audit -r requirements-dev.txt
 .venv/bin/actionlint
+.venv/bin/zizmor --offline .github
 PYTHONPATH=src python3 -m unittest discover -s tests
 python3 -m compileall -q src tests
 .venv/bin/python -m build
