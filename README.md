@@ -23,6 +23,7 @@ python3 -m venv .venv
 .venv/bin/python -m pip install -r requirements-dev.txt
 .venv/bin/ruff check .
 .venv/bin/bandit -c pyproject.toml -r src
+git ls-files -z | xargs -0 .venv/bin/detect-secrets-hook --baseline .secrets.baseline
 PYTHONPATH=src python3 -m unittest discover -s tests
 python3 -m compileall -q src tests
 ```

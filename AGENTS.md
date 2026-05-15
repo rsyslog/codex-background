@@ -1,5 +1,20 @@
 # AGENTS.md
 
+## Mandatory Testing
+
+Before committing Python changes, run the project validation suite:
+
+```bash
+.venv/bin/ruff check .
+.venv/bin/bandit -c pyproject.toml -r src
+git ls-files -z | xargs -0 .venv/bin/detect-secrets-hook --baseline .secrets.baseline
+PYTHONPATH=src python3 -m unittest discover -s tests
+python3 -m compileall -q src tests
+```
+
+If a check cannot be run, state the reason in the final response and in the
+commit body when the skipped check materially affects confidence.
+
 ## Commit Discipline
 
 - Keep commits focused on one coherent change.
