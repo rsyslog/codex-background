@@ -59,6 +59,13 @@ PYTHONPATH=src python3 -m unittest discover -s tests
 python3 -m compileall -q src tests
 ```
 
+Optional local pre-commit checks use the same installed development tools:
+
+```bash
+.venv/bin/pre-commit install
+.venv/bin/pre-commit run --all-files
+```
+
 Plugins can run on independent schedules by setting `interval_seconds` on each
 `[[plugins]]` entry. If omitted, the global `poll_interval_seconds` is used.
 Set `interval_seconds = 0` to run a plugin every scheduler cycle.
