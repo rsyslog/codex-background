@@ -4,6 +4,7 @@ from pathlib import Path
 from typing import Any
 import json
 import sqlite3
+import threading
 
 from codex_bg.models import AiResult, Event, Task, TaskStatus, utcnow
 
@@ -12,17 +13,20 @@ class Store:
     def __init__(self, path: str | Path):
         self.path = Path(path)
         self.path.parent.mkdir(parents=True, exist_ok=True)
-        self.conn = sqlite3.connect(self.path)
+        self._lock = threading.RLock()
+        self.conn = sqlite3.connect(self.path, check_same_thread=False)
         self.conn.row_factory = sqlite3.Row
         self.conn.execute("PRAGMA foreign_keys = ON")
         self.migrate()
 
     def close(self) -> None:
-        self.conn.close()
+        with self._lock:
+            self.conn.close()
 
     def migrate(self) -> None:
-        self.conn.executescript(
-            """
+        with self._lock:
+            self.conn.executescript(
+                """
             CREATE TABLE IF NOT EXISTS tasks (
                 id INTEGER PRIMARY KEY AUTOINCREMENT,
                 plugin_name TEXT NOT NULL,
@@ -65,10 +69,10 @@ class Store:
                 last_run_at TEXT NOT NULL,
                 updated_at TEXT NOT NULL
             );
-            """
-        )
-        self._ensure_column("tasks", "executor_options_json", "TEXT NOT NULL DEFAULT '{}'")
-        self.conn.commit()
+                """
+            )
+            self._ensure_column("tasks", "executor_options_json", "TEXT NOT NULL DEFAULT '{}'")
+            self.conn.commit()
 
     def _ensure_column(self, table: str, column: str, definition: str) -> None:
         rows = self.conn.execute(f"PRAGMA table_info({table})").fetchall()
@@ -79,40 +83,41 @@ class Store:
     def enqueue_event(self, event: Event) -> bool:
         dedupe_key = event.dedupe_key or _dedupe_key(event)
         now = utcnow()
-        try:
-            self.conn.execute(
-                """
-                INSERT INTO tasks (
-                    plugin_name, event_type, external_id, subject_id, prompt,
-                    payload_json, executor_options_json, workspace_key, dedupe_key, priority, status,
-                    created_at, updated_at
+        with self._lock:
+            try:
+                self.conn.execute(
+                    """
+                    INSERT INTO tasks (
+                        plugin_name, event_type, external_id, subject_id, prompt,
+                        payload_json, executor_options_json, workspace_key, dedupe_key, priority, status,
+                        created_at, updated_at
+                    )
+                    VALUES (?, ?, ?, ?, ?, ?, ?, ?, ?, ?, ?, ?, ?)
+                    """,
+                    (
+                        event.plugin_name,
+                        event.event_type,
+                        event.external_id,
+                        event.subject_id,
+                        event.prompt,
+                        json.dumps(event.payload, sort_keys=True),
+                        json.dumps(event.executor_options, sort_keys=True),
+                        event.workspace_key,
+                        dedupe_key,
+                        event.priority,
+                        TaskStatus.QUEUED.value,
+                        now,
+                        now,
+                    ),
                 )
-                VALUES (?, ?, ?, ?, ?, ?, ?, ?, ?, ?, ?, ?, ?)
-                """,
-                (
-                    event.plugin_name,
-                    event.event_type,
-                    event.external_id,
-                    event.subject_id,
-                    event.prompt,
-                    json.dumps(event.payload, sort_keys=True),
-                    json.dumps(event.executor_options, sort_keys=True),
-                    event.workspace_key,
-                    dedupe_key,
-                    event.priority,
-                    TaskStatus.QUEUED.value,
-                    now,
-                    now,
-                ),
-            )
-            self.conn.commit()
-            return True
-        except sqlite3.IntegrityError:
-            return False
+                self.conn.commit()
+                return True
+            except sqlite3.IntegrityError:
+                return False
 
     def lease_next_task(self, lease_owner: str) -> Task | None:
         now = utcnow()
-        with self.conn:
+        with self._lock, self.conn:
             row = self.conn.execute(
                 """
                 SELECT * FROM tasks
@@ -135,7 +140,8 @@ class Store:
         return _task_from_row(row)
 
     def get_task(self, task_id: int) -> Task:
-        row = self.conn.execute("SELECT * FROM tasks WHERE id = ?", (task_id,)).fetchone()
+        with self._lock:
+            row = self.conn.execute("SELECT * FROM tasks WHERE id = ?", (task_id,)).fetchone()
         if row is None:
             raise KeyError(f"task not found: {task_id}")
         return _task_from_row(row)
@@ -145,78 +151,83 @@ class Store:
 
     def mark_complete(self, task_id: int, session_id: str | None = None) -> None:
         now = utcnow()
-        self.conn.execute(
-            """
-            UPDATE tasks
-            SET status = ?, codex_session_id = COALESCE(?, codex_session_id),
-                lease_owner = NULL, leased_at = NULL, updated_at = ?
-            WHERE id = ?
-            """,
-            (TaskStatus.COMPLETE.value, session_id, now, task_id),
-        )
-        self.conn.commit()
+        with self._lock:
+            self.conn.execute(
+                """
+                UPDATE tasks
+                SET status = ?, codex_session_id = COALESCE(?, codex_session_id),
+                    lease_owner = NULL, leased_at = NULL, updated_at = ?
+                WHERE id = ?
+                """,
+                (TaskStatus.COMPLETE.value, session_id, now, task_id),
+            )
+            self.conn.commit()
 
     def mark_failed(self, task_id: int, error: str, status: TaskStatus = TaskStatus.FAILED) -> None:
         now = utcnow()
-        self.conn.execute(
-            """
-            UPDATE tasks
-            SET status = ?, attempts = attempts + 1, last_error = ?,
-                lease_owner = NULL, leased_at = NULL, updated_at = ?
-            WHERE id = ?
-            """,
-            (status.value, error, now, task_id),
-        )
-        self.conn.commit()
+        with self._lock:
+            self.conn.execute(
+                """
+                UPDATE tasks
+                SET status = ?, attempts = attempts + 1, last_error = ?,
+                    lease_owner = NULL, leased_at = NULL, updated_at = ?
+                WHERE id = ?
+                """,
+                (status.value, error, now, task_id),
+            )
+            self.conn.commit()
 
     def mark_callback_failed(self, task_id: int, error: str) -> None:
         self.mark_failed(task_id, error, TaskStatus.CALLBACK_FAILED)
 
     def record_run(self, result: AiResult) -> None:
-        self.conn.execute(
-            """
-            INSERT INTO runs (
-                task_id, status, artifact_dir, final_message, structured_json,
-                codex_session_id, error, created_at
+        with self._lock:
+            self.conn.execute(
+                """
+                INSERT INTO runs (
+                    task_id, status, artifact_dir, final_message, structured_json,
+                    codex_session_id, error, created_at
+                )
+                VALUES (?, ?, ?, ?, ?, ?, ?, ?)
+                """,
+                (
+                    result.task_id,
+                    result.status,
+                    result.artifact_dir,
+                    result.final_message,
+                    json.dumps(result.structured, sort_keys=True),
+                    result.codex_session_id,
+                    result.error,
+                    utcnow(),
+                ),
             )
-            VALUES (?, ?, ?, ?, ?, ?, ?, ?)
-            """,
-            (
-                result.task_id,
-                result.status,
-                result.artifact_dir,
-                result.final_message,
-                json.dumps(result.structured, sort_keys=True),
-                result.codex_session_id,
-                result.error,
-                utcnow(),
-            ),
-        )
-        self.conn.commit()
+            self.conn.commit()
 
     def recent_tasks(self, limit: int = 20) -> list[dict[str, Any]]:
-        rows = self.conn.execute(
-            """
-            SELECT id, plugin_name, event_type, subject_id, status, attempts,
-                   last_error, created_at, updated_at
-            FROM tasks
-            ORDER BY updated_at DESC
-            LIMIT ?
-            """,
-            (limit,),
-        ).fetchall()
+        with self._lock:
+            rows = self.conn.execute(
+                """
+                SELECT id, plugin_name, event_type, subject_id, status, attempts,
+                       last_error, created_at, updated_at
+                FROM tasks
+                ORDER BY updated_at DESC
+                LIMIT ?
+                """,
+                (limit,),
+            ).fetchall()
         return [dict(row) for row in rows]
 
     def latest_result(self, task_id: int) -> AiResult | None:
-        row = self.conn.execute(
-            """
-            SELECT * FROM runs
-            WHERE task_id = ?
-            ORDER BY id DESC
-            LIMIT 1
-            """,
-            (task_id,),
-        ).fetchone()
+        with self._lock:
+            row = self.conn.execute(
+                """
+                SELECT * FROM runs
+                WHERE task_id = ?
+                ORDER BY id DESC
+                LIMIT 1
+                """,
+                (task_id,),
+            ).fetchone()
         if row is None:
             return None
         return AiResult(
@@ -230,33 +241,36 @@ class Store:
         )
 
     def plugin_last_run(self, plugin_name: str) -> str | None:
-        row = self.conn.execute(
-            "SELECT last_run_at FROM plugin_runs WHERE plugin_name = ?",
-            (plugin_name,),
-        ).fetchone()
+        with self._lock:
+            row = self.conn.execute(
+                "SELECT last_run_at FROM plugin_runs WHERE plugin_name = ?",
+                (plugin_name,),
+            ).fetchone()
         return row["last_run_at"] if row else None
 
     def mark_plugin_run(self, plugin_name: str) -> str:
         now = utcnow()
-        self.conn.execute(
-            """
-            INSERT INTO plugin_runs (plugin_name, last_run_at, updated_at)
-            VALUES (?, ?, ?)
-            ON CONFLICT(plugin_name) DO UPDATE SET
-                last_run_at = excluded.last_run_at,
-                updated_at = excluded.updated_at
-            """,
-            (plugin_name, now, now),
-        )
-        self.conn.commit()
+        with self._lock:
+            self.conn.execute(
+                """
+                INSERT INTO plugin_runs (plugin_name, last_run_at, updated_at)
+                VALUES (?, ?, ?)
+                ON CONFLICT(plugin_name) DO UPDATE SET
+                    last_run_at = excluded.last_run_at,
+                    updated_at = excluded.updated_at
+                """,
+                (plugin_name, now, now),
+            )
+            self.conn.commit()
         return now
 
     def _set_status(self, task_id: int, status: TaskStatus) -> None:
-        self.conn.execute(
-            "UPDATE tasks SET status = ?, updated_at = ? WHERE id = ?",
-            (status.value, utcnow(), task_id),
-        )
-        self.conn.commit()
+        with self._lock:
+            self.conn.execute(
+                "UPDATE tasks SET status = ?, updated_at = ? WHERE id = ?",
+                (status.value, utcnow(), task_id),
+            )
+            self.conn.commit()
 
 
 def _dedupe_key(event: Event) -> str:

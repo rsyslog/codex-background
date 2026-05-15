@@ -4,13 +4,14 @@ from dataclasses import dataclass
 from datetime import UTC, datetime
 from importlib import import_module
 from time import sleep
-from typing import Any
+from typing import Any, Iterable
+import threading
 import uuid
 
 from codex_bg.config import AppConfig, PluginConfig
 from codex_bg.executor import CodexExecutor
 from codex_bg.models import AiResult, Task, TaskStatus
-from codex_bg.plugin import PluginContext, SchedulerPlugin
+from codex_bg.plugin import EventSink, PluginContext, SchedulerPlugin
 from codex_bg.runner import Runner
 from codex_bg.store import Store
 from codex_bg.workspace import WorkspaceError, WorkspaceManager
@@ -38,17 +39,25 @@ class Scheduler:
         self.debug(f"loading plugins: {', '.join(plugin.name for plugin in app.plugins) or '(none)'}")
         self.plugins = load_plugins(app)
         self.lease_owner = f"worker-{uuid.uuid4()}"
+        self._condition = threading.Condition()
+        self._stop_event = threading.Event()
         self.debug(f"scheduler initialized with database {app.database_path}")
         self.debug(f"shared workspace root is {app.workspace_root}")
         if app.dry_run:
             self.debug("dry-run mode enabled; plugin callbacks must not mutate external systems")
 
     def run_forever(self) -> None:
-        while True:
-            self.debug("starting scheduler cycle")
-            self.once()
-            self.debug(f"sleeping for {self.app.poll_interval_seconds}s")
-            sleep(self.app.poll_interval_seconds)
+        threads = self._start_event_sources()
+        try:
+            self._worker_loop()
+        except KeyboardInterrupt:
+            self.debug("shutdown requested")
+        finally:
+            self._stop_event.set()
+            with self._condition:
+                self._condition.notify_all()
+            for thread in threads:
+                thread.join(timeout=5)
 
     def once(self) -> dict[str, Any]:
         self.debug("running one scheduler cycle")
@@ -70,14 +79,7 @@ class Scheduler:
                 continue
             self.debug(f"generating events with plugin {loaded.config.name}")
             context = PluginContext(self.app, loaded.config, self.runner, self.debug)
-            for event in loaded.instance.generate_events(context):
-                if self.store.enqueue_event(event):
-                    self.debug(
-                        f"enqueued {event.event_type} from {event.plugin_name} for {event.subject_id}"
-                    )
-                    count += 1
-                else:
-                    self.debug(f"skipped duplicate event for {event.subject_id}")
+            count += self._submit_events(loaded.instance.generate_events(context))
             last_run = self.store.mark_plugin_run(loaded.config.name)
             self.debug(f"plugin {loaded.config.name} run recorded at {last_run}")
         return count
@@ -147,6 +149,88 @@ class Scheduler:
         if self.app.debug:
             print(f"[codex-bg] {message}", flush=True)
 
+    def _submit_events(self, events: Iterable[Any]) -> int:
+        count = 0
+        for event in events:
+            if self.store.enqueue_event(event):
+                self.debug(f"enqueued {event.event_type} from {event.plugin_name} for {event.subject_id}")
+                count += 1
+            else:
+                self.debug(f"skipped duplicate event for {event.subject_id}")
+        if count:
+            # Producers notify the worker immediately. This is the core event
+            # handoff: the worker does not need to poll to discover new tasks.
+            with self._condition:
+                self._condition.notify_all()
+        return count
+
+    def _start_event_sources(self) -> list[threading.Thread]:
+        threads = [
+            threading.Thread(
+                target=self._workspace_refresh_loop,
+                name="workspace-refresh",
+            )
+        ]
+        for loaded in self.plugins.values():
+            threads.append(
+                threading.Thread(
+                    target=self._plugin_source_loop,
+                    name=f"plugin-source-{loaded.config.name}",
+                    args=(loaded,),
+                )
+            )
+        for thread in threads:
+            thread.start()
+        return threads
+
+    def _workspace_refresh_loop(self) -> None:
+        while not self._stop_event.is_set():
+            try:
+                refreshed = self.refresh_workspaces()
+                if refreshed:
+                    self.debug(f"workspace refresh source refreshed {refreshed} workspace(s)")
+            except Exception as exc:
+                self.debug(f"workspace refresh source failed: {exc}")
+            self._stop_event.wait(max(1, self.app.workspace_refresh_interval_seconds))
+
+    def _plugin_source_loop(self, loaded: LoadedPlugin) -> None:
+        listener = getattr(loaded.instance, "run_event_source", None)
+        if listener:
+            self._run_plugin_listener(loaded, listener)
+            return
+        self._run_scheduled_plugin_source(loaded)
+
+    def _run_plugin_listener(self, loaded: LoadedPlugin, listener: Any) -> None:
+        context = PluginContext(self.app, loaded.config, self.runner, self.debug)
+        sink = _SchedulerEventSink(self)
+        self.debug(f"starting listener source for plugin {loaded.config.name}")
+        # Listener plugins own their blocking wait, e.g. an HTTP webhook server,
+        # message queue consumer, or filesystem watcher. They submit events via
+        # the sink as soon as external activity arrives.
+        listener(context, sink, self._stop_event)
+
+    def _run_scheduled_plugin_source(self, loaded: LoadedPlugin) -> None:
+        while not self._stop_event.is_set():
+            if self._plugin_due(loaded.config):
+                try:
+                    self.debug(f"scheduled source running plugin {loaded.config.name}")
+                    context = PluginContext(self.app, loaded.config, self.runner, self.debug)
+                    self._submit_events(loaded.instance.generate_events(context))
+                    last_run = self.store.mark_plugin_run(loaded.config.name)
+                    self.debug(f"plugin {loaded.config.name} run recorded at {last_run}")
+                except Exception as exc:
+                    self.debug(f"plugin source {loaded.config.name} failed: {exc}")
+            self._stop_event.wait(self._plugin_sleep_seconds(loaded.config))
+
+    def _worker_loop(self) -> None:
+        while not self._stop_event.is_set():
+            while self.work_one():
+                pass
+            with self._condition:
+                if not self._stop_event.is_set():
+                    self.debug("worker waiting for event notification")
+                    self._condition.wait()
+
     def _plugin_interval(self, plugin_config: PluginConfig) -> int:
         if plugin_config.interval_seconds is not None:
             return plugin_config.interval_seconds
@@ -172,6 +256,16 @@ class Scheduler:
             "due": self._plugin_due(plugin_config),
         }
 
+    def _plugin_sleep_seconds(self, plugin_config: PluginConfig) -> int:
+        interval = self._plugin_interval(plugin_config)
+        if interval <= 0:
+            return max(1, self.app.poll_interval_seconds)
+        last_run = self.store.plugin_last_run(plugin_config.name)
+        if last_run is None:
+            return 1
+        remaining = interval - _age_seconds(last_run)
+        return max(1, int(remaining))
+
 
 def load_plugins(app: AppConfig) -> dict[str, LoadedPlugin]:
     loaded: dict[str, LoadedPlugin] = {}
@@ -188,3 +282,11 @@ def _age_seconds(timestamp: str) -> float:
     if parsed.tzinfo is None:
         parsed = parsed.replace(tzinfo=UTC)
     return (datetime.now(UTC) - parsed).total_seconds()
+
+
+class _SchedulerEventSink:
+    def __init__(self, scheduler: Scheduler):
+        self.scheduler = scheduler
+
+    def submit(self, events: Iterable[Any]) -> int:
+        return self.scheduler._submit_events(events)
