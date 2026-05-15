@@ -9,7 +9,7 @@ from pathlib import Path
 from codex_bg.config import AppConfig, PluginConfig
 from codex_bg.models import AiResult, Task, TaskStatus
 from codex_bg.plugin import PluginContext
-from codex_bg.plugins.github_issue_triage import create_plugin
+from codex_bg.plugins.github_issue_triage import AI_REVIEW_FOOTER, create_plugin
 from codex_bg.runner import CommandError, CommandResult
 
 
@@ -174,6 +174,7 @@ class GitHubIssueTriageTests(unittest.TestCase):
         plugin.handle_result(PluginContext(AppConfig(), config, runner), task, result)  # type: ignore[arg-type]
 
         self.assertEqual(len(runner.comments), 1)
+        self.assertIn(AI_REVIEW_FOOTER, runner.comments[0])
         self.assertIn(["gh", "issue", "edit", "1", "--repo", "owner/repo", "--add-label", "bug"], runner.calls)
         self.assertIn(["gh", "issue", "edit", "1", "--repo", "owner/repo", "--milestone", "backlog"], runner.calls)
         self.assertIn(
@@ -225,6 +226,51 @@ class GitHubIssueTriageTests(unittest.TestCase):
             plugin.handle_result(PluginContext(AppConfig(), config, runner), task, result)  # type: ignore[arg-type]
 
         self.assertEqual(len(runner.comments), 1)
+
+    def test_handle_result_renders_references_before_footer(self) -> None:
+        config = _plugin_config("unused.md")
+        plugin = create_plugin(config)
+        runner = FakeRunner()
+        task = Task(
+            id=1,
+            plugin_name="issue_triage",
+            event_type="github_issue_triage",
+            external_id="owner/repo#1",
+            subject_id="owner/repo#1",
+            prompt="triage",
+            payload={
+                "repo": "owner/repo",
+                "issue": {"number": 1},
+                "triaged_label": "codex-triaged",
+                "allowed_labels": [],
+                "allowed_milestones": [],
+            },
+            workspace_key="main",
+            dedupe_key="k",
+            priority=100,
+            status=TaskStatus.RUNNING,
+            attempts=0,
+            codex_session_id=None,
+        )
+        result = AiResult(
+            task_id=1,
+            status="complete",
+            final_message="fallback",
+            structured={
+                "comment": "See docs.",
+                "labels": [],
+                "milestone": None,
+                "references": ["https://docs.rsyslog.com/configuration/modules/imfile.html"],
+            },
+            codex_session_id="session-1",
+            artifact_dir="artifacts",
+        )
+
+        plugin.handle_result(PluginContext(AppConfig(), config, runner), task, result)  # type: ignore[arg-type]
+
+        self.assertIn("References:", runner.comments[0])
+        self.assertIn("https://docs.rsyslog.com/configuration/modules/imfile.html", runner.comments[0])
+        self.assertTrue(runner.comments[0].rstrip().endswith(AI_REVIEW_FOOTER))
 
     def test_dry_run_does_not_post_comment_or_edit_issue(self) -> None:
         config = _plugin_config("unused.md")

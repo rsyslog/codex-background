@@ -11,6 +11,13 @@ from codex_bg.config import PluginConfig
 from codex_bg.models import AiResult, Event, Task
 from codex_bg.plugin import PluginContext
 
+AI_REVIEW_FOOTER = (
+    "---\n"
+    "_This response was prepared with AI assistance and reviewed by automation. "
+    "If you disagree with the triage or need more help, please post a follow-up; "
+    "a human maintainer will review it._"
+)
+
 
 @dataclass(frozen=True)
 class RepoTriageConfig:
@@ -226,6 +233,10 @@ Return exactly one JSON object with these keys:
 - comment: public triage comment to post on the issue
 - labels: array of labels to apply, using only allowed labels
 - milestone: milestone to assign, or null
+- references: array of source references where useful. Prefer docs.rsyslog.com
+  URLs for documentation references, and include commit hashes when the answer
+  depends on when behavior was introduced or changed. Use an empty array if no
+  good reference is available.
 - rationale: short private rationale
 - blocked: boolean, true if the issue cannot be triaged safely
 """
@@ -239,10 +250,14 @@ def _triage_output_schema() -> dict[str, Any]:
             "comment": {"type": "string"},
             "labels": {"type": "array", "items": {"type": "string"}},
             "milestone": {"anyOf": [{"type": "string"}, {"type": "null"}]},
+            "references": {
+                "type": "array",
+                "items": {"type": "string"},
+            },
             "rationale": {"type": "string"},
             "blocked": {"type": "boolean"},
         },
-        "required": ["comment", "labels", "milestone", "rationale", "blocked"],
+        "required": ["comment", "labels", "milestone", "references", "rationale", "blocked"],
     }
 
 
@@ -254,9 +269,27 @@ def _comment_body(structured: dict[str, Any], final_message: str, marker: str) -
         body = final_message.strip()
     else:
         body = "Codex triage completed, but no comment body was returned."
+    body = _append_references(body, structured.get("references", []))
+    body = _append_footer(body)
     if marker in body:
         return body
     return f"{marker}\n{body}"
+
+
+def _append_references(body: str, references: Any) -> str:
+    if not isinstance(references, list):
+        return body
+    refs = [ref.strip() for ref in references if isinstance(ref, str) and ref.strip()]
+    if not refs:
+        return body
+    lines = "\n".join(f"- {ref}" for ref in refs)
+    return f"{body.rstrip()}\n\nReferences:\n{lines}"
+
+
+def _append_footer(body: str) -> str:
+    if AI_REVIEW_FOOTER in body:
+        return body
+    return f"{body.rstrip()}\n\n{AI_REVIEW_FOOTER}"
 
 
 def _allowed_values(values: Any, allowed: set[str]) -> list[str]:
