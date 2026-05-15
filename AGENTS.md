@@ -19,10 +19,13 @@ commit body when the skipped check materially affects confidence.
 
 - Do not push directly to `main`.
 - Create a topic branch for every change.
-- Run the mandatory validation suite before opening a PR.
+- Run the mandatory validation suite before opening a PR. The same commands
+  are documented in README.md under "Development checks".
 - Open a PR against `main`.
-- Wait for required checks: `python` and `codeql`.
-- Resolve review comments and conversations before merge.
+- Wait for the required GitHub branch-protection checks named exactly `python`
+  and `codeql`.
+- Obtain approval and resolve all review comments and conversations before
+  merge.
 - Keep commits focused and use the commit discipline below.
 
 ## Commit Discipline
