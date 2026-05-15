@@ -15,6 +15,16 @@ python3 -m compileall -q src tests
 If a check cannot be run, state the reason in the final response and in the
 commit body when the skipped check materially affects confidence.
 
+## Contribution Flow
+
+- Do not push directly to `main`.
+- Create a topic branch for every change.
+- Run the mandatory validation suite before opening a PR.
+- Open a PR against `main`.
+- Wait for required checks: `python` and `codeql`.
+- Resolve review comments and conversations before merge.
+- Keep commits focused and use the commit discipline below.
+
 ## Commit Discipline
 
 - Keep commits focused on one coherent change.
