@@ -213,9 +213,11 @@ Process:
 2. If the issue looks like a support/configuration request, feature request,
    bug report, documentation request, CI/build problem, or anything that smells
    code- or repository-specific, inspect the local repository workspace before
-   finalizing. Look for repo-local Codex skills, triage guidance, issue
-   templates, documentation, or relevant source context and use that as the
-   primary policy.
+   finalizing. Check top-level `AGENTS.md` if present, then relevant subtree
+   `AGENTS.md` files for the area you inspect. Check `.agent/skills/` for
+   relevant skills; when a relevant skill exists, read its `SKILL.md` and
+   follow it. Then inspect issue templates, documentation, or relevant source
+   context as needed and use repository guidance as the primary policy.
 3. If the issue is obviously unrelated to this repository after rough
    classification, avoid unnecessary repo inspection and return a concise
    non-actionable triage.
