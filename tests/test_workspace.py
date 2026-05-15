@@ -73,7 +73,8 @@ class WorkspaceTests(unittest.TestCase):
 
             self.assertEqual(refreshed, 1)
             self.assertIn(["git", "clone", "https://example.invalid/repo.git", str(root / "workspaces" / "repo")], runner.calls)
-            self.assertTrue((root / "workspaces" / "repo" / ".codex-bg-refresh").exists())
+            self.assertTrue((root / "state" / "refresh" / "repo.stamp").exists())
+            self.assertFalse((root / "workspaces" / "repo" / ".codex-bg-refresh").exists())
 
     def test_refresh_refuses_dirty_shared_workspace(self) -> None:
         with tempfile.TemporaryDirectory() as tmp:

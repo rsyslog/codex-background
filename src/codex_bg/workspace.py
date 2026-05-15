@@ -45,7 +45,7 @@ class WorkspaceManager:
                 self.debug(f"workspace {workspace.key} refresh not due")
                 continue
             self._prepare_workspace(workspace, force_refresh=True)
-            self._write_refresh_stamp(path)
+            self._write_refresh_stamp(workspace)
             refreshed += 1
         return refreshed
 
@@ -73,7 +73,7 @@ class WorkspaceManager:
     def _refresh_due(self, path: Path) -> bool:
         if not (path / ".git").exists():
             return True
-        stamp = path / ".codex-bg-refresh"
+        stamp = self._refresh_stamp_path(path)
         if not stamp.exists():
             return True
         try:
@@ -82,8 +82,13 @@ class WorkspaceManager:
             return True
         return time.time() - last_refresh >= self.app.workspace_refresh_interval_seconds
 
-    def _write_refresh_stamp(self, path: Path) -> None:
-        (path / ".codex-bg-refresh").write_text(str(time.time()), encoding="utf-8")
+    def _write_refresh_stamp(self, workspace: WorkspaceConfig) -> None:
+        stamp = self._refresh_stamp_path(self._workspace_path(workspace))
+        stamp.parent.mkdir(parents=True, exist_ok=True)
+        stamp.write_text(str(time.time()), encoding="utf-8")
+
+    def _refresh_stamp_path(self, path: Path) -> Path:
+        return self.app.workspace_root / "state" / "refresh" / f"{path.name}.stamp"
 
     def _ensure_clean(self, path: Path, key: str) -> None:
         result = self.runner.run(["git", "status", "--porcelain"], cwd=path)
