@@ -24,6 +24,7 @@ class WorkspaceConfig:
 class PluginConfig:
     name: str
     module: str
+    interval_seconds: int | None = None
     values: dict[str, Any] = field(default_factory=dict)
 
 
@@ -61,7 +62,15 @@ def load_config(path: str | Path) -> AppConfig:
         values = dict(item)
         name = values.pop("name")
         module = values.pop("module")
-        plugins.append(PluginConfig(name=name, module=module, values=values))
+        interval_seconds = values.pop("interval_seconds", None)
+        plugins.append(
+            PluginConfig(
+                name=name,
+                module=module,
+                interval_seconds=int(interval_seconds) if interval_seconds is not None else None,
+                values=values,
+            )
+        )
 
     base_dir = config_path.parent
     return AppConfig(

@@ -53,6 +53,16 @@ class StoreTests(unittest.TestCase):
             self.assertEqual(leased.status, TaskStatus.CALLBACK_FAILED)
             self.assertEqual(store.latest_result(leased.id), result)
 
+    def test_plugin_run_state_round_trips(self) -> None:
+        with tempfile.TemporaryDirectory() as tmp:
+            store = Store(Path(tmp) / "state.sqlite3")
+
+            self.assertIsNone(store.plugin_last_run("plugin"))
+            first = store.mark_plugin_run("plugin")
+            second = store.plugin_last_run("plugin")
+
+            self.assertEqual(first, second)
+
 
 if __name__ == "__main__":
     unittest.main()

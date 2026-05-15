@@ -15,3 +15,7 @@ codex-bg status --config scheduler.toml
 ```
 
 `gh`, `git`, and `codex` must be installed and authenticated for real runs.
+
+Plugins can run on independent schedules by setting `interval_seconds` on each
+`[[plugins]]` entry. If omitted, the global `poll_interval_seconds` is used.
+Set `interval_seconds = 0` to run a plugin every scheduler cycle.

@@ -31,8 +31,10 @@ class MemoryPlugin:
 
     def __init__(self):
         self.handled: list[tuple[Task, AiResult]] = []
+        self.generate_calls = 0
 
     def generate_events(self, context: PluginContext):
+        self.generate_calls += 1
         return [
             Event(
                 plugin_name="memory",
@@ -73,7 +75,35 @@ class SchedulerTests(unittest.TestCase):
             self.assertEqual(first, {"refreshed": 0, "generated": 1, "worked": True})
             self.assertEqual(second, {"refreshed": 0, "generated": 0, "worked": False})
             self.assertEqual(len(plugin.handled), 1)
+            self.assertEqual(plugin.generate_calls, 1)
             self.assertEqual(plugin.handled[0][1].structured, {"comment": "ok"})
+
+    def test_zero_interval_plugin_runs_every_cycle(self) -> None:
+        with tempfile.TemporaryDirectory() as tmp:
+            plugin = MemoryPlugin()
+            module = types.ModuleType("test_memory_plugin_always")
+            module.create_plugin = lambda config: plugin
+            import sys
+
+            sys.modules["test_memory_plugin_always"] = module
+            app = AppConfig(
+                database_path=Path(tmp) / "state.sqlite3",
+                workdir_root=Path(tmp) / "workdirs",
+                codex=CodexConfig(),
+                plugins=[
+                    PluginConfig(
+                        name="memory",
+                        module="test_memory_plugin_always",
+                        interval_seconds=0,
+                    )
+                ],
+            )
+            scheduler = Scheduler(app, store=Store(app.database_path), runner=FakeRunner())  # type: ignore[arg-type]
+
+            scheduler.once()
+            scheduler.once()
+
+            self.assertEqual(plugin.generate_calls, 2)
 
 
 if __name__ == "__main__":

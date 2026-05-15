@@ -59,6 +59,12 @@ class Store:
                 error TEXT,
                 created_at TEXT NOT NULL
             );
+
+            CREATE TABLE IF NOT EXISTS plugin_runs (
+                plugin_name TEXT PRIMARY KEY,
+                last_run_at TEXT NOT NULL,
+                updated_at TEXT NOT NULL
+            );
             """
         )
         self._ensure_column("tasks", "executor_options_json", "TEXT NOT NULL DEFAULT '{}'")
@@ -222,6 +228,28 @@ class Store:
             artifact_dir=row["artifact_dir"],
             error=row["error"],
         )
+
+    def plugin_last_run(self, plugin_name: str) -> str | None:
+        row = self.conn.execute(
+            "SELECT last_run_at FROM plugin_runs WHERE plugin_name = ?",
+            (plugin_name,),
+        ).fetchone()
+        return row["last_run_at"] if row else None
+
+    def mark_plugin_run(self, plugin_name: str) -> str:
+        now = utcnow()
+        self.conn.execute(
+            """
+            INSERT INTO plugin_runs (plugin_name, last_run_at, updated_at)
+            VALUES (?, ?, ?)
+            ON CONFLICT(plugin_name) DO UPDATE SET
+                last_run_at = excluded.last_run_at,
+                updated_at = excluded.updated_at
+            """,
+            (plugin_name, now, now),
+        )
+        self.conn.commit()
+        return now
 
     def _set_status(self, task_id: int, status: TaskStatus) -> None:
         self.conn.execute(

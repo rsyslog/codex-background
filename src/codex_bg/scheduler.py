@@ -1,6 +1,7 @@
 from __future__ import annotations
 
 from dataclasses import dataclass
+from datetime import UTC, datetime
 from importlib import import_module
 from time import sleep
 from typing import Any
@@ -64,6 +65,9 @@ class Scheduler:
     def generate_events(self) -> int:
         count = 0
         for loaded in self.plugins.values():
+            if not self._plugin_due(loaded.config):
+                self.debug(f"plugin {loaded.config.name} is not due")
+                continue
             self.debug(f"generating events with plugin {loaded.config.name}")
             context = PluginContext(self.app, loaded.config, self.runner, self.debug)
             for event in loaded.instance.generate_events(context):
@@ -74,6 +78,8 @@ class Scheduler:
                     count += 1
                 else:
                     self.debug(f"skipped duplicate event for {event.subject_id}")
+            last_run = self.store.mark_plugin_run(loaded.config.name)
+            self.debug(f"plugin {loaded.config.name} run recorded at {last_run}")
         return count
 
     def work_one(self) -> bool:
@@ -116,7 +122,7 @@ class Scheduler:
 
     def status(self) -> dict[str, Any]:
         return {
-            "plugins": list(self.plugins.keys()),
+            "plugins": [self._plugin_status(loaded.config) for loaded in self.plugins.values()],
             "tasks": self.store.recent_tasks(),
         }
 
@@ -141,6 +147,31 @@ class Scheduler:
         if self.app.debug:
             print(f"[codex-bg] {message}", flush=True)
 
+    def _plugin_interval(self, plugin_config: PluginConfig) -> int:
+        if plugin_config.interval_seconds is not None:
+            return plugin_config.interval_seconds
+        return self.app.poll_interval_seconds
+
+    def _plugin_due(self, plugin_config: PluginConfig) -> bool:
+        interval = self._plugin_interval(plugin_config)
+        if interval <= 0:
+            return True
+        last_run = self.store.plugin_last_run(plugin_config.name)
+        if last_run is None:
+            return True
+        return _age_seconds(last_run) >= interval
+
+    def _plugin_status(self, plugin_config: PluginConfig) -> dict[str, Any]:
+        interval = self._plugin_interval(plugin_config)
+        last_run = self.store.plugin_last_run(plugin_config.name)
+        return {
+            "name": plugin_config.name,
+            "module": plugin_config.module,
+            "interval_seconds": interval,
+            "last_run_at": last_run,
+            "due": self._plugin_due(plugin_config),
+        }
+
 
 def load_plugins(app: AppConfig) -> dict[str, LoadedPlugin]:
     loaded: dict[str, LoadedPlugin] = {}
@@ -150,3 +181,10 @@ def load_plugins(app: AppConfig) -> dict[str, LoadedPlugin]:
         plugin = factory(plugin_config) if factory else getattr(module, "Plugin")()
         loaded[plugin_config.name] = LoadedPlugin(plugin_config, plugin)
     return loaded
+
+
+def _age_seconds(timestamp: str) -> float:
+    parsed = datetime.fromisoformat(timestamp)
+    if parsed.tzinfo is None:
+        parsed = parsed.replace(tzinfo=UTC)
+    return (datetime.now(UTC) - parsed).total_seconds()
