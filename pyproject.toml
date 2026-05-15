@@ -1,0 +1,20 @@
+[build-system]
+requires = ["setuptools>=69"]
+build-backend = "setuptools.build_meta"
+
+[project]
+name = "codex-bg"
+version = "0.1.0"
+description = "Plugin-driven Codex task scheduler"
+requires-python = ">=3.12"
+readme = "README.md"
+
+[project.scripts]
+codex-bg = "codex_bg.cli:main"
+
+[tool.setuptools.packages.find]
+where = ["src"]
+
+[tool.pytest.ini_options]
+pythonpath = ["src"]
+testpaths = ["tests"]

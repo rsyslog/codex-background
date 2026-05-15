@@ -1,0 +1,85 @@
+from __future__ import annotations
+
+from dataclasses import dataclass, field
+from pathlib import Path
+from typing import Any
+import tomllib
+
+
+@dataclass(frozen=True)
+class CodexConfig:
+    sandbox: str = "danger-full-access"
+    approval_policy: str = "never"
+    model: str | None = None
+
+
+@dataclass(frozen=True)
+class WorkspaceConfig:
+    key: str
+    repo: str | None = None
+    branch: str = "main"
+
+
+@dataclass(frozen=True)
+class PluginConfig:
+    name: str
+    module: str
+    values: dict[str, Any] = field(default_factory=dict)
+
+
+@dataclass(frozen=True)
+class AppConfig:
+    database_path: Path = Path("./codex-bg.sqlite3")
+    workdir_root: Path = Path("./workdirs")
+    workspace_root: Path = Path("~/aibot")
+    workspace_refresh_interval_seconds: int = 900
+    poll_interval_seconds: int = 900
+    debug: bool = False
+    dry_run: bool = False
+    codex: CodexConfig = field(default_factory=CodexConfig)
+    workspaces: dict[str, WorkspaceConfig] = field(default_factory=dict)
+    plugins: list[PluginConfig] = field(default_factory=list)
+
+
+def load_config(path: str | Path) -> AppConfig:
+    config_path = Path(path)
+    with config_path.open("rb") as fh:
+        raw = tomllib.load(fh)
+
+    codex = CodexConfig(**raw.get("codex", {}))
+    workspaces = {
+        item["key"]: WorkspaceConfig(
+            key=item["key"],
+            repo=item.get("repo"),
+            branch=item.get("branch", "main"),
+        )
+        for item in raw.get("workspaces", [])
+    }
+
+    plugins: list[PluginConfig] = []
+    for item in raw.get("plugins", []):
+        values = dict(item)
+        name = values.pop("name")
+        module = values.pop("module")
+        plugins.append(PluginConfig(name=name, module=module, values=values))
+
+    base_dir = config_path.parent
+    return AppConfig(
+        database_path=_resolve(base_dir, raw.get("database_path", "./codex-bg.sqlite3")),
+        workdir_root=_resolve(base_dir, raw.get("workdir_root", "./workdirs")),
+        workspace_root=_resolve(base_dir, raw.get("workspace_root", "~/aibot")),
+        workspace_refresh_interval_seconds=int(raw.get("workspace_refresh_interval_seconds", 900)),
+        poll_interval_seconds=int(raw.get("poll_interval_seconds", 900)),
+        debug=bool(raw.get("debug", False)),
+        dry_run=bool(raw.get("dry_run", False)),
+        codex=codex,
+        workspaces=workspaces,
+        plugins=plugins,
+    )
+
+
+def _resolve(base_dir: Path, value: str) -> Path:
+    path = Path(value).expanduser()
+    if path.is_absolute():
+        return path
+    return (base_dir / path).resolve()
