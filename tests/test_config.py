@@ -18,7 +18,7 @@ class ConfigTests(unittest.TestCase):
         self.assertEqual(app.codex.sandbox, "read-only")
         self.assertEqual(app.codex.approval_policy, "on-request")
 
-    def test_plugin_interval_seconds_is_parsed_separately(self) -> None:
+    def test_plugin_scheduler_options_are_parsed_separately(self) -> None:
         with tempfile.TemporaryDirectory() as tmp:
             config = Path(tmp) / "scheduler.toml"
             config.write_text(
@@ -29,6 +29,8 @@ poll_interval_seconds = 900
 name = "issue_triage"
 module = "codex_bg.plugins.github_issue_triage"
 interval_seconds = 60
+rate_limit_per_hour = 10
+rate_limit_per_day = 20
 custom_value = "kept"
 """,
                 encoding="utf-8",
@@ -37,6 +39,8 @@ custom_value = "kept"
             app = load_config(config)
 
         self.assertEqual(app.plugins[0].interval_seconds, 60)
+        self.assertEqual(app.plugins[0].rate_limit_per_hour, 10)
+        self.assertEqual(app.plugins[0].rate_limit_per_day, 20)
         self.assertEqual(app.plugins[0].base_dir, Path(tmp))
         self.assertEqual(app.plugins[0].values, {"custom_value": "kept"})
 

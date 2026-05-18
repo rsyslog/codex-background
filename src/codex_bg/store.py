@@ -3,10 +3,22 @@ from __future__ import annotations
 import json
 import sqlite3
 import threading
+from dataclasses import dataclass
+from datetime import UTC, datetime, timedelta
 from pathlib import Path
 from typing import Any
 
 from codex_bg.models import AiResult, Event, Task, TaskStatus, utcnow
+
+
+@dataclass(frozen=True)
+class EnqueueResult:
+    status: str
+    task_id: int | None = None
+
+    @property
+    def accepted(self) -> bool:
+        return self.status == "accepted"
 
 
 class Store:
@@ -69,6 +81,18 @@ class Store:
                 last_run_at TEXT NOT NULL,
                 updated_at TEXT NOT NULL
             );
+
+            CREATE TABLE IF NOT EXISTS plugin_rate_events (
+                id INTEGER PRIMARY KEY AUTOINCREMENT,
+                plugin_name TEXT NOT NULL,
+                created_at TEXT NOT NULL
+            );
+
+            CREATE INDEX IF NOT EXISTS idx_plugin_rate_events_plugin_created
+                ON plugin_rate_events(plugin_name, created_at);
+
+            CREATE INDEX IF NOT EXISTS idx_plugin_rate_events_created
+                ON plugin_rate_events(created_at);
                 """
             )
             self._ensure_column("tasks", "executor_options_json", "TEXT NOT NULL DEFAULT '{}'")
@@ -81,11 +105,26 @@ class Store:
         self.conn.execute(f"ALTER TABLE {table} ADD COLUMN {column} {definition}")
 
     def enqueue_event(self, event: Event) -> bool:
+        return self.enqueue_event_with_limits(event, None, None).accepted
+
+    def enqueue_event_with_limits(
+        self,
+        event: Event,
+        rate_limit_per_hour: int | None,
+        rate_limit_per_day: int | None,
+    ) -> EnqueueResult:
         dedupe_key = event.dedupe_key or _dedupe_key(event)
         now = utcnow()
-        with self._lock:
+        with self._lock, self.conn:
+            if self._dedupe_key_exists(dedupe_key):
+                return EnqueueResult("duplicate")
+            self._purge_old_rate_events(now)
+            if self._rate_limit_exceeded(event.plugin_name, now, rate_limit_per_hour, 3600):
+                return EnqueueResult("rate_limited_hour")
+            if self._rate_limit_exceeded(event.plugin_name, now, rate_limit_per_day, 24 * 3600):
+                return EnqueueResult("rate_limited_day")
             try:
-                self.conn.execute(
+                cursor = self.conn.execute(
                     """
                     INSERT INTO tasks (
                         plugin_name, event_type, external_id, subject_id, prompt,
@@ -111,10 +150,52 @@ class Store:
                         now,
                     ),
                 )
-                self.conn.commit()
-                return True
+                self.conn.execute(
+                    """
+                    INSERT INTO plugin_rate_events (plugin_name, created_at)
+                    VALUES (?, ?)
+                    """,
+                    (event.plugin_name, now),
+                )
+                return EnqueueResult("accepted", cursor.lastrowid)
             except sqlite3.IntegrityError:
-                return False
+                return EnqueueResult("duplicate")
+
+    def _dedupe_key_exists(self, dedupe_key: str) -> bool:
+        row = self.conn.execute(
+            "SELECT 1 FROM tasks WHERE dedupe_key = ? LIMIT 1",
+            (dedupe_key,),
+        ).fetchone()
+        return row is not None
+
+    def _purge_old_rate_events(self, now: str) -> None:
+        cutoff = _add_seconds(now, -(24 * 3600))
+        self.conn.execute(
+            """
+            DELETE FROM plugin_rate_events
+            WHERE created_at < ?
+            """,
+            (cutoff,),
+        )
+
+    def _rate_limit_exceeded(
+        self,
+        plugin_name: str,
+        now: str,
+        limit: int | None,
+        window_seconds: int,
+    ) -> bool:
+        if limit is None:
+            return False
+        cutoff = _add_seconds(now, -window_seconds)
+        row = self.conn.execute(
+            """
+            SELECT COUNT(*) AS count FROM plugin_rate_events
+            WHERE plugin_name = ? AND created_at >= ?
+            """,
+            (plugin_name, cutoff),
+        ).fetchone()
+        return int(row["count"]) >= limit
 
     def lease_next_task(self, lease_owner: str) -> Task | None:
         now = utcnow()
@@ -288,6 +369,13 @@ class Store:
 
 def _dedupe_key(event: Event) -> str:
     return f"{event.plugin_name}:{event.event_type}:{event.external_id}"
+
+
+def _add_seconds(timestamp: str, seconds: int) -> str:
+    parsed = datetime.fromisoformat(timestamp)
+    if parsed.tzinfo is None:
+        parsed = parsed.replace(tzinfo=UTC)
+    return (parsed + timedelta(seconds=seconds)).isoformat()
 
 
 def _task_from_row(row: sqlite3.Row) -> Task:

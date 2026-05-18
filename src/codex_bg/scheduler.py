@@ -11,6 +11,7 @@ from typing import Any
 from codex_bg.config import AppConfig, PluginConfig
 from codex_bg.executor import CodexExecutor
 from codex_bg.models import AiResult, Task, TaskStatus
+from codex_bg.notify import Notification, NotificationSeverity, Notifier, StdoutNotifier
 from codex_bg.plugin import PluginContext, SchedulerPlugin
 from codex_bg.runner import Runner
 from codex_bg.store import Store
@@ -30,10 +31,12 @@ class Scheduler:
         *,
         store: Store | None = None,
         runner: Runner | None = None,
+        notifier: Notifier | None = None,
     ):
         self.app = app
         self.store = store or Store(app.database_path)
         self.runner = runner or Runner()
+        self.notifier = notifier or StdoutNotifier()
         self.workspace_manager = WorkspaceManager(app, self.runner, debug=self.debug)
         self.executor = CodexExecutor(self.runner, app.workdir_root, app.codex, debug=self.debug)
         self.debug(
@@ -80,7 +83,7 @@ class Scheduler:
                 self.debug(f"plugin {loaded.config.name} is not due")
                 continue
             self.debug(f"generating events with plugin {loaded.config.name}")
-            context = PluginContext(self.app, loaded.config, self.runner, self.debug)
+            context = self._plugin_context(loaded.config)
             count += self._submit_events(loaded.instance.generate_events(context))
             last_run = self.store.mark_plugin_run(loaded.config.name)
             self.debug(f"plugin {loaded.config.name} run recorded at {last_run}")
@@ -96,7 +99,7 @@ class Scheduler:
             f"leased task {task.id} {task.plugin_name}/{task.event_type} for {task.subject_id}"
         )
         plugin = self.plugins[task.plugin_name]
-        context = PluginContext(self.app, plugin.config, self.runner, self.debug)
+        context = self._plugin_context(plugin.config)
         if task.status == TaskStatus.CALLBACK_FAILED:
             self.debug(f"retrying callback for task {task.id}")
             result = self.store.latest_result(task.id)
@@ -153,16 +156,52 @@ class Scheduler:
         if self.app.debug:
             print(f"[codex-bg] {message}", flush=True)
 
+    def notify(
+        self,
+        severity: NotificationSeverity,
+        message: str,
+        *,
+        subject_id: str | None = None,
+        details: dict[str, Any] | None = None,
+    ) -> None:
+        self.notifier.notify(
+            Notification(
+                severity=severity,
+                message=message,
+                subject_id=subject_id,
+                details=details,
+            )
+        )
+
+    def _plugin_context(self, plugin_config: PluginConfig) -> PluginContext:
+        return PluginContext(self.app, plugin_config, self.runner, self.debug, self.notifier)
+
     def _submit_events(self, events: Iterable[Any]) -> int:
         count = 0
+        rate_limited: dict[str, int] = {}
         for event in events:
-            if self.store.enqueue_event(event):
+            hourly, daily = self._event_rate_limits(event.plugin_name)
+            result = self.store.enqueue_event_with_limits(event, hourly, daily)
+            if result.accepted:
                 self.debug(
                     f"enqueued {event.event_type} from {event.plugin_name} for {event.subject_id}"
                 )
                 count += 1
+            elif result.status.startswith("rate_limited"):
+                self.debug(
+                    f"rate limited {event.event_type} from {event.plugin_name} "
+                    f"for {event.subject_id}: {result.status}"
+                )
+                rate_limited[event.plugin_name] = rate_limited.get(event.plugin_name, 0) + 1
             else:
                 self.debug(f"skipped duplicate event for {event.subject_id}")
+        for plugin_name, dropped in sorted(rate_limited.items()):
+            self.notify(
+                "warning",
+                f"plugin {plugin_name} dropped {dropped} event(s) due to rate limits",
+                subject_id=plugin_name,
+                details={"plugin_name": plugin_name, "dropped": dropped},
+            )
         if count:
             # Producers notify the worker immediately. This is the core event
             # handoff: the worker does not need to poll to discover new tasks.
@@ -207,7 +246,7 @@ class Scheduler:
         self._run_scheduled_plugin_source(loaded)
 
     def _run_plugin_listener(self, loaded: LoadedPlugin, listener: Any) -> None:
-        context = PluginContext(self.app, loaded.config, self.runner, self.debug)
+        context = self._plugin_context(loaded.config)
         sink = _SchedulerEventSink(self)
         self.debug(f"starting listener source for plugin {loaded.config.name}")
         # Listener plugins own their blocking wait, e.g. an HTTP webhook server,
@@ -226,7 +265,7 @@ class Scheduler:
             self.debug(f"scheduled source running plugin {loaded.config.name}")
             last_run = self.store.mark_plugin_run(loaded.config.name)
             self.debug(f"plugin {loaded.config.name} run attempt recorded at {last_run}")
-            context = PluginContext(self.app, loaded.config, self.runner, self.debug)
+            context = self._plugin_context(loaded.config)
             self._submit_events(loaded.instance.generate_events(context))
         except Exception as exc:
             self.debug(f"plugin source {loaded.config.name} failed: {exc}")
@@ -268,6 +307,8 @@ class Scheduler:
             "name": plugin_config.name,
             "module": plugin_config.module,
             "interval_seconds": interval,
+            "rate_limit_per_hour": self._plugin_rate_limits(plugin_config.name)[0],
+            "rate_limit_per_day": self._plugin_rate_limits(plugin_config.name)[1],
             "last_run_at": last_run,
             "due": self._plugin_due(plugin_config),
         }
@@ -281,6 +322,22 @@ class Scheduler:
             return 1
         remaining = interval - _age_seconds(last_run)
         return max(1, int(remaining))
+
+    def _event_rate_limits(self, plugin_name: str) -> tuple[int | None, int | None]:
+        loaded = self.plugins.get(plugin_name)
+        if loaded is None:
+            return None, None
+        return self._plugin_rate_limits(plugin_name)
+
+    def _plugin_rate_limits(self, plugin_name: str) -> tuple[int | None, int | None]:
+        loaded = self.plugins[plugin_name]
+        hourly = loaded.config.rate_limit_per_hour
+        daily = loaded.config.rate_limit_per_day
+        if hourly is None:
+            hourly = getattr(loaded.instance, "default_rate_limit_per_hour", None)
+        if daily is None:
+            daily = getattr(loaded.instance, "default_rate_limit_per_day", None)
+        return hourly, daily
 
 
 def load_plugins(app: AppConfig) -> dict[str, LoadedPlugin]:

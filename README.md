@@ -18,8 +18,8 @@ then posts findings and applies allowlisted metadata through `gh`.
 ```bash
 python -m pip install -e .
 cp scheduler.example.toml scheduler.toml
-codex-bg once --config scheduler.toml --debug
-codex-bg status --config scheduler.toml
+codex-bg --config scheduler.toml --debug once
+codex-bg --config scheduler.toml status
 ```
 
 `gh`, `git`, and `codex` must be installed and authenticated for real runs.
@@ -30,7 +30,7 @@ contents and local paths; keep those logs private.
 To run continuously after validation:
 
 ```bash
-codex-bg run --config scheduler.toml --debug
+codex-bg --config scheduler.toml --debug run
 ```
 
 ## Safety Notes
@@ -75,6 +75,10 @@ Optional local pre-commit checks use the same installed development tools:
 Plugins can run on independent schedules by setting `interval_seconds` on each
 `[[plugins]]` entry. If omitted, the global `poll_interval_seconds` is used.
 Set `interval_seconds = 0` to run a plugin every scheduler cycle.
+Plugins can also set `rate_limit_per_hour` and `rate_limit_per_day`; events
+above the configured limits are dropped and reported through operator
+notifications. The issue triage plugin defaults to 15 accepted events per hour
+and 30 accepted events per day.
 
 ## Event Sources
 

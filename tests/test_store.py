@@ -23,6 +23,69 @@ class StoreTests(unittest.TestCase):
             self.assertTrue(store.enqueue_event(event))
             self.assertFalse(store.enqueue_event(event))
 
+    def test_enqueue_with_limits_drops_events_over_hourly_limit(self) -> None:
+        with tempfile.TemporaryDirectory() as tmp:
+            store = Store(Path(tmp) / "state.sqlite3")
+
+            first = store.enqueue_event_with_limits(_event("1"), 1, None)
+            second = store.enqueue_event_with_limits(_event("2"), 1, None)
+
+            self.assertTrue(first.accepted)
+            self.assertEqual(second.status, "rate_limited_hour")
+
+    def test_enqueue_with_limits_drops_events_over_daily_limit(self) -> None:
+        with tempfile.TemporaryDirectory() as tmp:
+            store = Store(Path(tmp) / "state.sqlite3")
+
+            first = store.enqueue_event_with_limits(_event("1"), None, 1)
+            second = store.enqueue_event_with_limits(_event("2"), None, 1)
+
+            self.assertTrue(first.accepted)
+            self.assertEqual(second.status, "rate_limited_day")
+
+    def test_duplicate_events_do_not_consume_rate_limit(self) -> None:
+        with tempfile.TemporaryDirectory() as tmp:
+            store = Store(Path(tmp) / "state.sqlite3")
+            first = _event("1")
+
+            self.assertTrue(store.enqueue_event_with_limits(first, 2, None).accepted)
+            self.assertEqual(store.enqueue_event_with_limits(first, 2, None).status, "duplicate")
+            self.assertTrue(store.enqueue_event_with_limits(_event("2"), 2, None).accepted)
+            self.assertEqual(
+                store.enqueue_event_with_limits(_event("3"), 2, None).status,
+                "rate_limited_hour",
+            )
+
+    def test_rate_limit_ignores_events_outside_window(self) -> None:
+        with tempfile.TemporaryDirectory() as tmp:
+            store = Store(Path(tmp) / "state.sqlite3")
+            store.conn.execute(
+                "INSERT INTO plugin_rate_events (plugin_name, created_at) VALUES (?, ?)",
+                ("p", "2000-01-01T00:00:00+00:00"),
+            )
+            store.conn.commit()
+
+            result = store.enqueue_event_with_limits(_event("1"), 1, 1)
+
+            self.assertTrue(result.accepted)
+
+    def test_rate_limit_purge_removes_old_events_for_removed_plugins(self) -> None:
+        with tempfile.TemporaryDirectory() as tmp:
+            store = Store(Path(tmp) / "state.sqlite3")
+            store.conn.execute(
+                "INSERT INTO plugin_rate_events (plugin_name, created_at) VALUES (?, ?)",
+                ("removed", "2000-01-01T00:00:00+00:00"),
+            )
+            store.conn.commit()
+
+            store.enqueue_event_with_limits(_event("1"), None, None)
+
+            row = store.conn.execute(
+                "SELECT COUNT(*) AS count FROM plugin_rate_events WHERE plugin_name = ?",
+                ("removed",),
+            ).fetchone()
+            self.assertEqual(int(row["count"]), 0)
+
     def test_has_pending_work_tracks_queued_and_leased_states(self) -> None:
         with tempfile.TemporaryDirectory() as tmp:
             store = Store(Path(tmp) / "state.sqlite3")
@@ -82,6 +145,15 @@ class StoreTests(unittest.TestCase):
             second = store.plugin_last_run("plugin")
 
             self.assertEqual(first, second)
+
+def _event(external_id: str) -> Event:
+    return Event(
+        plugin_name="p",
+        event_type="triage",
+        external_id=external_id,
+        subject_id=f"repo#{external_id}",
+        prompt="triage",
+    )
 
 
 if __name__ == "__main__":

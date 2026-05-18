@@ -25,6 +25,10 @@ branch = "main"
 name = "issue_triage"
 module = "codex_bg.plugins.github_issue_triage"
 interval_seconds = 900
+# The issue triage plugin defaults to 15 accepted events/hour and 30/day.
+# Set these explicitly to override the plugin defaults. Omit them for defaults.
+# rate_limit_per_hour = 15
+# rate_limit_per_day = 30
 
 [[plugins.repos]]
 repo = "example/example-repo"
