@@ -44,6 +44,33 @@ custom_value = "kept"
         self.assertEqual(app.plugins[0].base_dir, Path(tmp))
         self.assertEqual(app.plugins[0].values, {"custom_value": "kept"})
 
+    def test_codex_and_prescreen_model_config_are_separate(self) -> None:
+        with tempfile.TemporaryDirectory() as tmp:
+            config = Path(tmp) / "scheduler.toml"
+            config.write_text(
+                """
+[codex]
+model = "gpt-main"
+reasoning_effort = "high"
+
+[prescreen]
+module = "codex_bg.prescreen_codex"
+model = "gpt-screen"
+reasoning_effort = "medium"
+custom_value = "kept"
+""",
+                encoding="utf-8",
+            )
+
+            app = load_config(config)
+
+        self.assertEqual(app.codex.model, "gpt-main")
+        self.assertEqual(app.codex.reasoning_effort, "high")
+        self.assertEqual(app.prescreen.module, "codex_bg.prescreen_codex")
+        self.assertEqual(app.prescreen.model, "gpt-screen")
+        self.assertEqual(app.prescreen.reasoning_effort, "medium")
+        self.assertEqual(app.prescreen.values, {"custom_value": "kept"})
+
 
 if __name__ == "__main__":
     unittest.main()

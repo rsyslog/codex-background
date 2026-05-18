@@ -11,6 +11,7 @@ class CodexConfig:
     sandbox: str = "read-only"
     approval_policy: str = "on-request"
     model: str | None = None
+    reasoning_effort: str | None = None
 
 
 @dataclass(frozen=True)
@@ -18,6 +19,14 @@ class WorkspaceConfig:
     key: str
     repo: str | None = None
     branch: str = "main"
+
+
+@dataclass(frozen=True)
+class PreScreenConfig:
+    module: str | None = None
+    model: str | None = None
+    reasoning_effort: str | None = None
+    values: dict[str, Any] = field(default_factory=dict)
 
 
 @dataclass(frozen=True)
@@ -41,6 +50,7 @@ class AppConfig:
     debug: bool = False
     dry_run: bool = False
     codex: CodexConfig = field(default_factory=CodexConfig)
+    prescreen: PreScreenConfig = field(default_factory=PreScreenConfig)
     workspaces: dict[str, WorkspaceConfig] = field(default_factory=dict)
     plugins: list[PluginConfig] = field(default_factory=list)
 
@@ -52,6 +62,7 @@ def load_config(path: str | Path) -> AppConfig:
 
     base_dir = config_path.parent.resolve()
     codex = CodexConfig(**raw.get("codex", {}))
+    prescreen = _prescreen_config(raw.get("prescreen", {}))
     workspaces = {
         item["key"]: WorkspaceConfig(
             key=item["key"],
@@ -90,6 +101,7 @@ def load_config(path: str | Path) -> AppConfig:
         debug=bool(raw.get("debug", False)),
         dry_run=bool(raw.get("dry_run", False)),
         codex=codex,
+        prescreen=prescreen,
         workspaces=workspaces,
         plugins=plugins,
     )
@@ -106,3 +118,16 @@ def _optional_int(value: Any) -> int | None:
     if value is None:
         return None
     return int(value)
+
+
+def _prescreen_config(raw: dict[str, Any]) -> PreScreenConfig:
+    values = dict(raw)
+    module = values.pop("module", None)
+    model = values.pop("model", None)
+    reasoning_effort = values.pop("reasoning_effort", None)
+    return PreScreenConfig(
+        module=module,
+        model=str(model) if model is not None else None,
+        reasoning_effort=str(reasoning_effort) if reasoning_effort is not None else None,
+        values=values,
+    )

@@ -46,6 +46,10 @@ codex-bg --config scheduler.toml --debug run
 - The GitHub issue triage plugin constrains labels and milestones to configured
   allowlists, but AI output still needs review before trusting it on important
   repositories.
+- Plugins can ask the scheduler to pre-screen untrusted subjects before
+  enqueuing automation. The default pre-screener accepts everything. Configure
+  `[prescreen] module = "codex_bg.prescreen_codex"` to use a Codex go/no-go
+  gate; it rejects unclear, unrelated, or unsafe subjects by skipping them.
 
 ## Development checks
 
@@ -79,6 +83,10 @@ Plugins can also set `rate_limit_per_hour` and `rate_limit_per_day`; events
 above the configured limits are dropped and reported through operator
 notifications. The issue triage plugin defaults to 15 accepted events per hour
 and 30 accepted events per day.
+Main task model settings live under `[codex]`. Pre-screening can use its own
+`[prescreen]` model and `reasoning_effort`; if those are omitted it inherits
+the `[codex]` values, and if no model is configured it uses `gpt-5.4-mini` with
+medium reasoning.
 
 ## Event Sources
 

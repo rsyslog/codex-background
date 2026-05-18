@@ -8,11 +8,12 @@ from datetime import UTC, datetime
 from importlib import import_module
 from typing import Any
 
-from codex_bg.config import AppConfig, PluginConfig
+from codex_bg.config import AppConfig, PluginConfig, PreScreenConfig
 from codex_bg.executor import CodexExecutor
 from codex_bg.models import AiResult, Task, TaskStatus
 from codex_bg.notify import Notification, NotificationSeverity, Notifier, StdoutNotifier
 from codex_bg.plugin import PluginContext, SchedulerPlugin
+from codex_bg.prescreen import AcceptAllPreScreener, PreScreener
 from codex_bg.runner import Runner
 from codex_bg.store import Store
 from codex_bg.workspace import WorkspaceError, WorkspaceManager
@@ -32,11 +33,13 @@ class Scheduler:
         store: Store | None = None,
         runner: Runner | None = None,
         notifier: Notifier | None = None,
+        pre_screener: PreScreener | None = None,
     ):
         self.app = app
         self.store = store or Store(app.database_path)
         self.runner = runner or Runner()
         self.notifier = notifier or StdoutNotifier()
+        self.pre_screener = pre_screener or load_pre_screener(app.prescreen, self.runner)
         self.workspace_manager = WorkspaceManager(app, self.runner, debug=self.debug)
         self.executor = CodexExecutor(self.runner, app.workdir_root, app.codex, debug=self.debug)
         self.debug(
@@ -174,7 +177,14 @@ class Scheduler:
         )
 
     def _plugin_context(self, plugin_config: PluginConfig) -> PluginContext:
-        return PluginContext(self.app, plugin_config, self.runner, self.debug, self.notifier)
+        return PluginContext(
+            self.app,
+            plugin_config,
+            self.runner,
+            self.debug,
+            self.notifier,
+            self.pre_screener,
+        )
 
     def _submit_events(self, events: Iterable[Any]) -> int:
         count = 0
@@ -348,6 +358,25 @@ def load_plugins(app: AppConfig) -> dict[str, LoadedPlugin]:
         plugin = factory(plugin_config) if factory else module.Plugin()
         loaded[plugin_config.name] = LoadedPlugin(plugin_config, plugin)
     return loaded
+
+
+def load_pre_screener(config: PreScreenConfig, runner: Runner) -> PreScreener:
+    if not config.module:
+        return AcceptAllPreScreener()
+    module = import_module(config.module)
+    factory = getattr(module, "create_prescreener", None)
+    if factory is not None:
+        return factory(config, runner)
+    class_name = str(config.values.get("class_name", ""))
+    candidate_names = [class_name] if class_name else ["Plugin", "CodexPreScreener", "PreScreener"]
+    for candidate_name in candidate_names:
+        candidate = getattr(module, candidate_name, None)
+        if candidate is not None:
+            return candidate(config, runner)
+    raise AttributeError(
+        f"pre-screener module {config.module!r} must define create_prescreener() "
+        "or a Plugin class; set prescreen.class_name for custom class names"
+    )
 
 
 def _age_seconds(timestamp: str) -> float:

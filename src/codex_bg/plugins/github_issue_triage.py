@@ -10,6 +10,7 @@ from typing import Any
 from codex_bg.config import PluginConfig
 from codex_bg.models import AiResult, Event, Task
 from codex_bg.plugin import PluginContext
+from codex_bg.prescreen import ScreeningRequest
 
 AI_REVIEW_FOOTER = (
     "---\n"
@@ -30,6 +31,7 @@ class RepoTriageConfig:
     limit: int = 30
     max_issue_age_days: int | None = None
     sandbox: str = "read-only"
+    prescreen_policy: str | None = None
 
 
 class GitHubIssueTriagePlugin:
@@ -63,6 +65,13 @@ class GitHubIssueTriagePlugin:
                 number = issue["number"]
                 updated_at = issue.get("updatedAt") or issue.get("createdAt") or "unknown"
                 subject_id = f"{repo.repo}#{number}"
+                screening = context.prescreen(_github_issue_screening_request(context, repo, issue))
+                if not screening.allowed:
+                    context.debug(
+                        f"pre-screen rejected {subject_id}; leaving for human: "
+                        f"{screening.reason}"
+                    )
+                    continue
                 prompt = _triage_prompt(repo, issue, instructions)
                 events.append(
                     Event(
@@ -162,6 +171,7 @@ def _repo_config(item: dict[str, Any], base_dir: Path) -> RepoTriageConfig:
         limit=int(item.get("limit", 30)),
         max_issue_age_days=_optional_int(item.get("max_issue_age_days")),
         sandbox=item.get("sandbox", "read-only"),
+        prescreen_policy=item.get("prescreen_policy"),
     )
 
 
@@ -215,6 +225,40 @@ def _issue_is_too_old(issue: dict[str, Any], max_issue_age_days: int | None) -> 
         return False
     cutoff = datetime.now(UTC) - timedelta(days=max_issue_age_days)
     return created < cutoff
+
+
+def _github_issue_screening_request(
+    context: PluginContext,
+    repo: RepoTriageConfig,
+    issue: dict[str, Any],
+) -> ScreeningRequest:
+    number = issue.get("number", "unknown")
+    return ScreeningRequest(
+        plugin_name=context.plugin.name,
+        subject_type="github_issue",
+        subject_id=f"{repo.repo}#{number}",
+        payload={
+            "repo": repo.repo,
+            "issue": issue,
+        },
+        policy=_github_issue_prescreen_policy(repo),
+    )
+
+
+def _github_issue_prescreen_policy(repo: RepoTriageConfig) -> str:
+    base_policy = (
+        f"Allow automation only when the GitHub issue is about {repo.repo} with high "
+        "probability. Reject unrelated, spam, vague, or off-topic issues. "
+        "Reject issues that with high probability ask to find, exploit, or enumerate "
+        "cybersecurity weaknesses, vulnerabilities, bypasses, exploit chains, or "
+        "attack techniques. Allow ordinary defensive hardening, secure configuration, "
+        "bug reports, documentation requests, support requests, and responsible "
+        "maintainer-facing vulnerability coordination that does not ask automation to "
+        "discover or weaponize weaknesses. If uncertain, reject and leave it for a human."
+    )
+    if repo.prescreen_policy:
+        return f"{base_policy}\n\nAdditional repository policy:\n{repo.prescreen_policy}"
+    return base_policy
 
 
 def _triage_prompt(repo: RepoTriageConfig, issue: dict[str, Any], instructions: str) -> str:

@@ -10,6 +10,7 @@ from codex_bg.config import AppConfig, PluginConfig
 from codex_bg.models import AiResult, Task, TaskStatus
 from codex_bg.plugin import PluginContext
 from codex_bg.plugins.github_issue_triage import AI_REVIEW_FOOTER, create_plugin
+from codex_bg.prescreen import PreScreenContext, ScreeningRequest, ScreeningResult
 from codex_bg.runner import CommandError, CommandResult
 
 
@@ -42,6 +43,16 @@ class FailingEditRunner(FakeRunner):
             self.calls.append(list(args))
             raise CommandError(CommandResult(list(args), 1, "", "edit failed"))
         return super().run(args, cwd=cwd, input_text=input_text, check=check)
+
+
+class FakePreScreener:
+    def __init__(self, allowed: bool):
+        self.allowed = allowed
+        self.requests: list[ScreeningRequest] = []
+
+    def screen(self, context: PreScreenContext, request: ScreeningRequest) -> ScreeningResult:
+        self.requests.append(request)
+        return ScreeningResult(self.allowed, "test decision")
 
 
 class GitHubIssueTriageTests(unittest.TestCase):
@@ -84,6 +95,72 @@ class GitHubIssueTriageTests(unittest.TestCase):
             self.assertEqual(events[0].executor_options["sandbox"], "read-only")
             self.assertIn("issue.json", events[0].executor_options["artifact_files"])
             self.assertIn("output_schema", events[0].executor_options)
+
+    def test_generate_events_skips_prescreen_rejected_issues(self) -> None:
+        with tempfile.TemporaryDirectory() as tmp:
+            instructions = Path(tmp) / "triage.md"
+            instructions.write_text("Be concise.", encoding="utf-8")
+            config = _plugin_config(str(instructions))
+            plugin = create_plugin(config)
+            runner = FakeRunner(
+                [
+                    {
+                        "number": 1,
+                        "title": "unrelated",
+                        "body": "please help with another product",
+                        "labels": [],
+                        "updatedAt": "2026-05-15T00:00:00Z",
+                    }
+                ]
+            )
+            pre_screener = FakePreScreener(False)
+
+            events = plugin.generate_events(
+                PluginContext(
+                    AppConfig(),
+                    config,
+                    runner,  # type: ignore[arg-type]
+                    pre_screener=pre_screener,
+                )
+            )
+
+            self.assertEqual(events, [])
+            self.assertEqual(len(pre_screener.requests), 1)
+            self.assertIn("owner/repo", pre_screener.requests[0].policy)
+            self.assertIn("cybersecurity", pre_screener.requests[0].policy)
+
+    def test_generate_events_includes_repository_prescreen_policy(self) -> None:
+        with tempfile.TemporaryDirectory() as tmp:
+            instructions = Path(tmp) / "triage.md"
+            instructions.write_text("Be concise.", encoding="utf-8")
+            config = _plugin_config(
+                str(instructions),
+                prescreen_policy="Only automate parser issues.",
+            )
+            plugin = create_plugin(config)
+            runner = FakeRunner(
+                [
+                    {
+                        "number": 1,
+                        "title": "parser problem",
+                        "body": "body",
+                        "labels": [],
+                        "updatedAt": "2026-05-15T00:00:00Z",
+                    }
+                ]
+            )
+            pre_screener = FakePreScreener(True)
+
+            plugin.generate_events(
+                PluginContext(
+                    AppConfig(),
+                    config,
+                    runner,  # type: ignore[arg-type]
+                    pre_screener=pre_screener,
+                )
+            )
+
+            self.assertIn("Only automate parser issues.", pre_screener.requests[0].policy)
 
     def test_generate_events_resolves_instruction_file_relative_to_config(self) -> None:
         with tempfile.TemporaryDirectory() as tmp:
@@ -403,6 +480,7 @@ def _plugin_config(
     max_issue_age_days: int | None = None,
     sandbox: str | None = None,
     base_dir: Path | None = None,
+    prescreen_policy: str | None = None,
 ) -> PluginConfig:
     repo_config = {
         "repo": "owner/repo",
@@ -416,6 +494,8 @@ def _plugin_config(
         repo_config["max_issue_age_days"] = max_issue_age_days
     if sandbox is not None:
         repo_config["sandbox"] = sandbox
+    if prescreen_policy is not None:
+        repo_config["prescreen_policy"] = prescreen_policy
     return PluginConfig(
         name="issue_triage",
         module="codex_bg.plugins.github_issue_triage",

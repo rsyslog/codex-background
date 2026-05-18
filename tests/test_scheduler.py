@@ -5,12 +5,12 @@ import types
 import unittest
 from pathlib import Path
 
-from codex_bg.config import AppConfig, CodexConfig, PluginConfig
+from codex_bg.config import AppConfig, CodexConfig, PluginConfig, PreScreenConfig
 from codex_bg.models import AiResult, Event, Task
 from codex_bg.notify import Notification
 from codex_bg.plugin import PluginContext
 from codex_bg.runner import CommandResult
-from codex_bg.scheduler import Scheduler
+from codex_bg.scheduler import Scheduler, load_pre_screener
 from codex_bg.store import Store
 
 
@@ -289,6 +289,29 @@ class SchedulerTests(unittest.TestCase):
 
             self.assertEqual(status["plugins"][0]["rate_limit_per_hour"], 1)
             self.assertIsNone(status["plugins"][0]["rate_limit_per_day"])
+
+    def test_load_pre_screener_uses_configured_class_name(self) -> None:
+        module = types.ModuleType("test_custom_prescreener")
+
+        class CustomPreScreener:
+            def __init__(self, config, runner):
+                self.config = config
+                self.runner = runner
+
+        module.CustomPreScreener = CustomPreScreener
+        import sys
+
+        sys.modules["test_custom_prescreener"] = module
+
+        screener = load_pre_screener(
+            PreScreenConfig(
+                module="test_custom_prescreener",
+                values={"class_name": "CustomPreScreener"},
+            ),
+            FakeRunner(),  # type: ignore[arg-type]
+        )
+
+        self.assertIsInstance(screener, CustomPreScreener)
 
 
 if __name__ == "__main__":

@@ -47,6 +47,36 @@ class ExecutorTests(unittest.TestCase):
             args = runner.calls[0]
             self.assertEqual(args[:4], ["codex", "--ask-for-approval", "never", "exec"])
 
+    def test_model_and_reasoning_effort_come_from_codex_config(self) -> None:
+        with tempfile.TemporaryDirectory() as tmp:
+            runner = FakeRunner()
+            executor = CodexExecutor(
+                runner,
+                Path(tmp),
+                CodexConfig(model="gpt-main", reasoning_effort="high"),
+            )
+            task = Task(
+                id=1,
+                plugin_name="p",
+                event_type="e",
+                external_id="x",
+                subject_id="s",
+                prompt="prompt",
+                payload={},
+                workspace_key=None,
+                dedupe_key="k",
+                priority=100,
+                status=TaskStatus.RUNNING,
+                attempts=0,
+                codex_session_id=None,
+            )
+
+            executor.run(task, None)
+
+            args = runner.calls[0]
+            self.assertEqual(args[args.index("--model") + 1], "gpt-main")
+            self.assertIn('model_reasoning_effort="high"', args)
+
     def test_task_options_write_artifacts_schema_and_use_read_only(self) -> None:
         with tempfile.TemporaryDirectory() as tmp:
             runner = FakeRunner()
