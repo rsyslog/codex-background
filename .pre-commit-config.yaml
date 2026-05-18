@@ -1,20 +1,43 @@
 repos:
   - repo: https://github.com/astral-sh/ruff-pre-commit
-    rev: v0.14.8
+    rev: v0.15.13
     hooks:
       - id: ruff-check
 
   - repo: local
     hooks:
+      - id: actionlint
+        name: actionlint
+        entry: actionlint
+        language: python
+        pass_filenames: false
+        additional_dependencies: ["actionlint-py==1.7.12.24"]
+
       - id: bandit
         name: bandit
         entry: bandit -c pyproject.toml -r src
         language: python
         pass_filenames: false
-        additional_dependencies: ["bandit[toml]==1.8.6"]
+        additional_dependencies: ["bandit[toml]==1.9.4"]
+
+      - id: pip-audit
+        name: pip-audit
+        entry: pip-audit -r requirements-dev.txt
+        language: python
+        pass_filenames: false
+        additional_dependencies: ["pip-audit==2.10.0"]
 
   - repo: https://github.com/Yelp/detect-secrets
     rev: v1.5.0
     hooks:
       - id: detect-secrets
         args: ["--baseline", ".secrets.baseline"]
+
+  - repo: local
+    hooks:
+      - id: zizmor
+        name: zizmor
+        entry: zizmor --offline .github
+        language: python
+        pass_filenames: false
+        additional_dependencies: ["zizmor==1.25.0"]
