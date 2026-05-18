@@ -35,8 +35,22 @@ jobs:
       - name: Secret scan
         run: git ls-files -z | xargs -0 detect-secrets-hook --baseline .secrets.baseline
 
+      - name: Dependency audit
+        run: pip-audit -r requirements-dev.txt
+
+      - name: GitHub Actions lint
+        run: actionlint
+
       - name: Unit tests
         run: PYTHONPATH=src python -m unittest discover -s tests
 
       - name: Compile Python files
         run: python -m compileall -q src tests
+
+      - name: Build package
+        run: python -m build
+
+      - name: Install built wheel
+        run: |
+          python -m pip install --force-reinstall dist/*.whl
+          codex-bg --help
