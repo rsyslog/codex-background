@@ -68,6 +68,10 @@ class CodexExecutor:
             ]
             if output_schema:
                 args.extend(["--output-schema", str(output_schema)])
+            if self.config.reasoning_effort:
+                args.extend(
+                    ["--config", f'model_reasoning_effort="{self.config.reasoning_effort}"']
+                )
             if self.config.model:
                 args.extend(["--model", self.config.model])
             if cwd:

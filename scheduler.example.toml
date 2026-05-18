@@ -15,6 +15,21 @@ dry_run = true
 [codex]
 sandbox = "read-only"
 approval_policy = "on-request"
+# Main task model. Omit to use the local Codex CLI default.
+# model = "gpt-5.4"
+# reasoning_effort = "medium"
+
+[prescreen]
+# Omit this section or leave module unset to accept all plugin pre-screening
+# requests. The Codex implementation skips automation when it cannot produce a
+# clear go/no-go decision.
+module = "codex_bg.prescreen_codex"
+# If model or reasoning_effort are omitted here, the pre-screener inherits
+# [codex] values. If neither section sets them, it uses gpt-5.4-mini/medium.
+# model = "gpt-5.4-mini"
+# reasoning_effort = "medium"
+# For custom pre-screeners without create_prescreener(), use:
+# class_name = "Plugin"
 
 [[workspaces]]
 key = "example-repo"
@@ -40,3 +55,5 @@ allowed_milestones = []
 limit = 30
 max_issue_age_days = 7
 sandbox = "read-only"
+# Optional repository-specific addition to the default pre-screening policy.
+# prescreen_policy = "Only automate issues about this repository's supported components."
