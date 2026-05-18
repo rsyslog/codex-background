@@ -45,6 +45,12 @@ class FailingEditRunner(FakeRunner):
 
 
 class GitHubIssueTriageTests(unittest.TestCase):
+    def test_plugin_sets_conservative_default_rate_limits(self) -> None:
+        plugin = create_plugin(_plugin_config("unused.md"))
+
+        self.assertEqual(plugin.default_rate_limit_per_hour, 15)
+        self.assertEqual(plugin.default_rate_limit_per_day, 30)
+
     def test_generate_events_skips_triaged_issues(self) -> None:
         with tempfile.TemporaryDirectory() as tmp:
             instructions = Path(tmp) / "triage.md"

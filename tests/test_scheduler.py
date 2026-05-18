@@ -7,6 +7,7 @@ from pathlib import Path
 
 from codex_bg.config import AppConfig, CodexConfig, PluginConfig
 from codex_bg.models import AiResult, Event, Task
+from codex_bg.notify import Notification
 from codex_bg.plugin import PluginContext
 from codex_bg.runner import CommandResult
 from codex_bg.scheduler import Scheduler
@@ -52,6 +53,40 @@ class MemoryPlugin:
         return None
 
 
+class MultiEventPlugin:
+    name = "multi"
+    default_rate_limit_per_hour = 1
+    default_rate_limit_per_day = None
+
+    def __init__(self):
+        self.generate_calls = 0
+
+    def generate_events(self, context: PluginContext):
+        self.generate_calls += 1
+        return [
+            Event(
+                plugin_name="multi",
+                event_type="test",
+                external_id="1",
+                subject_id="subject-1",
+                prompt="Return JSON.",
+            ),
+            Event(
+                plugin_name="multi",
+                event_type="test",
+                external_id="2",
+                subject_id="subject-2",
+                prompt="Return JSON.",
+            ),
+        ]
+
+    def handle_result(self, context: PluginContext, task: Task, result: AiResult) -> None:
+        return None
+
+    def cleanup(self, context: PluginContext, subject_id: str) -> None:
+        return None
+
+
 class FailingPlugin:
     name = "failing"
 
@@ -63,6 +98,14 @@ class FailingPlugin:
 
     def cleanup(self, context: PluginContext, subject_id: str) -> None:
         return None
+
+
+class FakeNotifier:
+    def __init__(self):
+        self.notifications: list[Notification] = []
+
+    def notify(self, notification: Notification) -> None:
+        self.notifications.append(notification)
 
 
 class SchedulerTests(unittest.TestCase):
@@ -171,6 +214,81 @@ class SchedulerTests(unittest.TestCase):
             scheduler._wait_for_work_notification()
 
             self.assertTrue(scheduler.store.has_pending_work())
+
+    def test_submit_events_applies_plugin_default_rate_limit_and_notifies(self) -> None:
+        with tempfile.TemporaryDirectory() as tmp:
+            plugin = MultiEventPlugin()
+            module = types.ModuleType("test_multi_plugin_defaults")
+            module.create_plugin = lambda config: plugin
+            import sys
+
+            sys.modules["test_multi_plugin_defaults"] = module
+            notifier = FakeNotifier()
+            app = AppConfig(
+                database_path=Path(tmp) / "state.sqlite3",
+                workdir_root=Path(tmp) / "workdirs",
+                plugins=[PluginConfig(name="multi", module="test_multi_plugin_defaults")],
+            )
+            scheduler = Scheduler(
+                app,
+                store=Store(app.database_path),
+                runner=FakeRunner(),  # type: ignore[arg-type]
+                notifier=notifier,
+            )
+
+            generated = scheduler.generate_events()
+
+            self.assertEqual(generated, 1)
+            self.assertTrue(scheduler.store.has_pending_work())
+            self.assertEqual(len(notifier.notifications), 1)
+            self.assertEqual(notifier.notifications[0].severity, "warning")
+            self.assertEqual(notifier.notifications[0].subject_id, "multi")
+            self.assertIn("dropped 1 event", notifier.notifications[0].message)
+
+    def test_configured_rate_limit_overrides_plugin_default(self) -> None:
+        with tempfile.TemporaryDirectory() as tmp:
+            plugin = MultiEventPlugin()
+            module = types.ModuleType("test_multi_plugin_config_override")
+            module.create_plugin = lambda config: plugin
+            import sys
+
+            sys.modules["test_multi_plugin_config_override"] = module
+            app = AppConfig(
+                database_path=Path(tmp) / "state.sqlite3",
+                workdir_root=Path(tmp) / "workdirs",
+                plugins=[
+                    PluginConfig(
+                        name="multi",
+                        module="test_multi_plugin_config_override",
+                        rate_limit_per_hour=2,
+                    )
+                ],
+            )
+            scheduler = Scheduler(app, store=Store(app.database_path), runner=FakeRunner())  # type: ignore[arg-type]
+
+            generated = scheduler.generate_events()
+
+            self.assertEqual(generated, 2)
+
+    def test_status_reports_effective_rate_limits(self) -> None:
+        with tempfile.TemporaryDirectory() as tmp:
+            plugin = MultiEventPlugin()
+            module = types.ModuleType("test_multi_plugin_status")
+            module.create_plugin = lambda config: plugin
+            import sys
+
+            sys.modules["test_multi_plugin_status"] = module
+            app = AppConfig(
+                database_path=Path(tmp) / "state.sqlite3",
+                workdir_root=Path(tmp) / "workdirs",
+                plugins=[PluginConfig(name="multi", module="test_multi_plugin_status")],
+            )
+            scheduler = Scheduler(app, store=Store(app.database_path), runner=FakeRunner())  # type: ignore[arg-type]
+
+            status = scheduler.status()
+
+            self.assertEqual(status["plugins"][0]["rate_limit_per_hour"], 1)
+            self.assertIsNone(status["plugins"][0]["rate_limit_per_day"])
 
 
 if __name__ == "__main__":

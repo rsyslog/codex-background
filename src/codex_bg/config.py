@@ -25,6 +25,8 @@ class PluginConfig:
     name: str
     module: str
     interval_seconds: int | None = None
+    rate_limit_per_hour: int | None = None
+    rate_limit_per_day: int | None = None
     base_dir: Path = Path(".")
     values: dict[str, Any] = field(default_factory=dict)
 
@@ -65,11 +67,15 @@ def load_config(path: str | Path) -> AppConfig:
         name = values.pop("name")
         module = values.pop("module")
         interval_seconds = values.pop("interval_seconds", None)
+        rate_limit_per_hour = values.pop("rate_limit_per_hour", None)
+        rate_limit_per_day = values.pop("rate_limit_per_day", None)
         plugins.append(
             PluginConfig(
                 name=name,
                 module=module,
                 interval_seconds=int(interval_seconds) if interval_seconds is not None else None,
+                rate_limit_per_hour=_optional_int(rate_limit_per_hour),
+                rate_limit_per_day=_optional_int(rate_limit_per_day),
                 base_dir=base_dir,
                 values=values,
             )
@@ -94,3 +100,9 @@ def _resolve(base_dir: Path, value: str) -> Path:
     if path.is_absolute():
         return path
     return (base_dir / path).resolve()
+
+
+def _optional_int(value: Any) -> int | None:
+    if value is None:
+        return None
+    return int(value)

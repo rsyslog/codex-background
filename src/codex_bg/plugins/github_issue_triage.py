@@ -33,6 +33,9 @@ class RepoTriageConfig:
 
 
 class GitHubIssueTriagePlugin:
+    default_rate_limit_per_hour = 15
+    default_rate_limit_per_day = 30
+
     def __init__(self, config: PluginConfig):
         self.name = config.name
         self.repos = [
