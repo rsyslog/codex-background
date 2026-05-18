@@ -146,6 +146,21 @@ class StoreTests(unittest.TestCase):
 
             self.assertEqual(first, second)
 
+    def test_plugin_state_round_trips_json_values(self) -> None:
+        with tempfile.TemporaryDirectory() as tmp:
+            store = Store(Path(tmp) / "state.sqlite3")
+
+            self.assertEqual(
+                store.get_plugin_state("plugin", "key", {"missing": True}),
+                {"missing": True},
+            )
+            store.set_plugin_state("plugin", "key", {"last_seen": "2026-05-18T00:00:00Z"})
+
+            self.assertEqual(
+                store.get_plugin_state("plugin", "key"),
+                {"last_seen": "2026-05-18T00:00:00Z"},
+            )
+
 def _event(external_id: str) -> Event:
     return Event(
         plugin_name="p",

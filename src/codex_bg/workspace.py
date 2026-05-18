@@ -34,14 +34,14 @@ class WorkspaceManager:
             raise WorkspaceError(f"unknown workspace_key: {task.workspace_key}")
         return self._prepare_workspace(workspace, force_refresh=True)
 
-    def refresh_due_workspaces(self) -> int:
+    def refresh_due_workspaces(self, *, force: bool = False) -> int:
         refreshed = 0
         self.app.workspace_root.mkdir(parents=True, exist_ok=True)
         for workspace in self.app.workspaces.values():
             if not workspace.repo:
                 continue
             path = self._workspace_path(workspace)
-            if not self._refresh_due(path):
+            if not force and not self._refresh_due(path):
                 self.debug(f"workspace {workspace.key} refresh not due")
                 continue
             self._prepare_workspace(workspace, force_refresh=True)

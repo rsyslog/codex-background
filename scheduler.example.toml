@@ -15,9 +15,9 @@ dry_run = true
 [codex]
 sandbox = "read-only"
 approval_policy = "on-request"
-# Main task model. Omit to use the local Codex CLI default.
-# model = "gpt-5.4"
-# reasoning_effort = "medium"
+# Main task model. Use a strong model for triage quality.
+model = "gpt-5.5"
+reasoning_effort = "medium"
 
 [prescreen]
 # Omit this section or leave module unset to accept all plugin pre-screening
@@ -27,7 +27,8 @@ module = "codex_bg.prescreen_codex"
 # If model or reasoning_effort are omitted here, the pre-screener inherits
 # [codex] values. If neither section sets them, it uses gpt-5.4-mini/medium.
 # model = "gpt-5.4-mini"
-# reasoning_effort = "medium"
+# reasoning_effort = "low"
+# timeout_seconds = 20
 # For custom pre-screeners without create_prescreener(), use:
 # class_name = "Plugin"
 
@@ -47,6 +48,9 @@ interval_seconds = 900
 
 [[plugins.repos]]
 repo = "example/example-repo"
+# Defaults to the repository basename. Override this for forks when the
+# project identity differs from the GitHub owner/repo used for API calls.
+# project_name = "example-repo"
 workspace_key = "example-repo"
 instructions_file = "./triage-instructions.example.md"
 triaged_label = "AI Triaged"

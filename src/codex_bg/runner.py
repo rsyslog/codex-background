@@ -29,15 +29,25 @@ class Runner:
         cwd: str | Path | None = None,
         input_text: str | None = None,
         check: bool = True,
+        timeout: int | float | None = None,
     ) -> CommandResult:
-        completed = subprocess.run(
-            args,
-            cwd=str(cwd) if cwd else None,
-            input=input_text,
-            text=True,
-            capture_output=True,
-            check=False,
-        )
+        try:
+            completed = subprocess.run(
+                args,
+                cwd=str(cwd) if cwd else None,
+                input=input_text,
+                text=True,
+                capture_output=True,
+                check=False,
+                timeout=timeout,
+            )
+        except subprocess.TimeoutExpired as exc:
+            return CommandResult(
+                args=args,
+                returncode=124,
+                stdout=_timeout_output(exc.stdout),
+                stderr=f"command timed out after {timeout} seconds",
+            )
         result = CommandResult(
             args=args,
             returncode=completed.returncode,
@@ -47,3 +57,11 @@ class Runner:
         if check and result.returncode != 0:
             raise CommandError(result)
         return result
+
+
+def _timeout_output(value: str | bytes | None) -> str:
+    if value is None:
+        return ""
+    if isinstance(value, bytes):
+        return value.decode(errors="replace")
+    return value

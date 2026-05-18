@@ -93,6 +93,14 @@ class Store:
 
             CREATE INDEX IF NOT EXISTS idx_plugin_rate_events_created
                 ON plugin_rate_events(created_at);
+
+            CREATE TABLE IF NOT EXISTS plugin_state (
+                plugin_name TEXT NOT NULL,
+                state_key TEXT NOT NULL,
+                value_json TEXT NOT NULL,
+                updated_at TEXT NOT NULL,
+                PRIMARY KEY (plugin_name, state_key)
+            );
                 """
             )
             self._ensure_column("tasks", "executor_options_json", "TEXT NOT NULL DEFAULT '{}'")
@@ -357,6 +365,34 @@ class Store:
             )
             self.conn.commit()
         return now
+
+    def get_plugin_state(self, plugin_name: str, key: str, default: Any = None) -> Any:
+        with self._lock:
+            row = self.conn.execute(
+                """
+                SELECT value_json FROM plugin_state
+                WHERE plugin_name = ? AND state_key = ?
+                """,
+                (plugin_name, key),
+            ).fetchone()
+        if row is None:
+            return default
+        return json.loads(row["value_json"])
+
+    def set_plugin_state(self, plugin_name: str, key: str, value: Any) -> None:
+        now = utcnow()
+        with self._lock:
+            self.conn.execute(
+                """
+                INSERT INTO plugin_state (plugin_name, state_key, value_json, updated_at)
+                VALUES (?, ?, ?, ?)
+                ON CONFLICT(plugin_name, state_key) DO UPDATE SET
+                    value_json = excluded.value_json,
+                    updated_at = excluded.updated_at
+                """,
+                (plugin_name, key, json.dumps(value, sort_keys=True), now),
+            )
+            self.conn.commit()
 
     def _set_status(self, task_id: int, status: TaskStatus) -> None:
         with self._lock:

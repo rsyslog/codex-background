@@ -15,6 +15,7 @@ from codex_bg.prescreen import (
     ScreeningResult,
 )
 from codex_bg.runner import Runner
+from codex_bg.store import Store
 
 
 def _noop_debug(message: str) -> None:
@@ -29,6 +30,7 @@ class PluginContext:
     debug: Callable[[str], None] = _noop_debug
     notifier: Notifier | None = None
     pre_screener: PreScreener | None = None
+    store: Store | None = None
 
     def notify(
         self,
@@ -58,6 +60,18 @@ class PluginContext:
         """Run a plugin-supplied subject through the registered pre-screener."""
         screener = self.pre_screener or AcceptAllPreScreener()
         return screener.screen(PreScreenContext(self.app, self.runner, self.debug), request)
+
+    def get_state(self, key: str, default: Any = None) -> Any:
+        """Return durable plugin-owned state stored under this plugin name."""
+        if self.store is None:
+            return default
+        return self.store.get_plugin_state(self.plugin.name, key, default)
+
+    def set_state(self, key: str, value: Any) -> None:
+        """Persist durable plugin-owned state stored under this plugin name."""
+        if self.store is None:
+            return
+        self.store.set_plugin_state(self.plugin.name, key, value)
 
 
 class SchedulerPlugin(Protocol):
