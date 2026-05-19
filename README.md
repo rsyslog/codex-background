@@ -83,10 +83,19 @@ Plugins can also set `rate_limit_per_hour` and `rate_limit_per_day`; events
 above the configured limits are dropped and reported through operator
 notifications. The issue triage plugin defaults to 15 accepted events per hour
 and 30 accepted events per day.
+The GitHub issue triage plugin also stores a per-repo `last_seen_updated_at`
+watermark in SQLite. The first run scans the configured recent window, then
+later runs skip issues whose GitHub `updatedAt` is not newer than that stored
+watermark.
 Main task model settings live under `[codex]`. Pre-screening can use its own
 `[prescreen]` model and `reasoning_effort`; if those are omitted it inherits
 the `[codex]` values, and if no model is configured it uses `gpt-5.4-mini` with
-medium reasoning.
+medium reasoning. The Codex pre-screener also accepts `timeout_seconds` to fail
+closed instead of letting guardrail checks run indefinitely.
+The Codex pre-screener runs isolated from the repository instructions: it uses
+a temporary working directory, `--ignore-rules`, and a minimized subject payload
+so repo `AGENTS.md` files and skills are reserved for the main triage path after
+the guardrail decision passes.
 
 ## Event Sources
 

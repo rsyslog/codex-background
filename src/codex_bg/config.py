@@ -26,6 +26,7 @@ class PreScreenConfig:
     module: str | None = None
     model: str | None = None
     reasoning_effort: str | None = None
+    timeout_seconds: int = 20
     values: dict[str, Any] = field(default_factory=dict)
 
 
@@ -125,9 +126,11 @@ def _prescreen_config(raw: dict[str, Any]) -> PreScreenConfig:
     module = values.pop("module", None)
     model = values.pop("model", None)
     reasoning_effort = values.pop("reasoning_effort", None)
+    timeout_seconds = values.pop("timeout_seconds", 20)
     return PreScreenConfig(
         module=module,
         model=str(model) if model is not None else None,
         reasoning_effort=str(reasoning_effort) if reasoning_effort is not None else None,
+        timeout_seconds=int(timeout_seconds),
         values=values,
     )

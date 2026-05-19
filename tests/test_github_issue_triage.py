@@ -12,6 +12,7 @@ from codex_bg.plugin import PluginContext
 from codex_bg.plugins.github_issue_triage import AI_REVIEW_FOOTER, create_plugin
 from codex_bg.prescreen import PreScreenContext, ScreeningRequest, ScreeningResult
 from codex_bg.runner import CommandError, CommandResult
+from codex_bg.store import Store
 
 
 class FakeRunner:
@@ -96,11 +97,119 @@ class GitHubIssueTriageTests(unittest.TestCase):
             self.assertIn("issue.json", events[0].executor_options["artifact_files"])
             self.assertIn("output_schema", events[0].executor_options)
 
-    def test_generate_events_skips_prescreen_rejected_issues(self) -> None:
+    def test_generate_events_stores_and_uses_repo_update_watermark(self) -> None:
         with tempfile.TemporaryDirectory() as tmp:
             instructions = Path(tmp) / "triage.md"
             instructions.write_text("Be concise.", encoding="utf-8")
             config = _plugin_config(str(instructions))
+            plugin = create_plugin(config)
+            store = Store(Path(tmp) / "state.sqlite3")
+            runner = FakeRunner(
+                [
+                    {
+                        "number": 1,
+                        "title": "first",
+                        "body": "body",
+                        "labels": [],
+                        "updatedAt": "2026-05-15T01:00:00Z",
+                    }
+                ]
+            )
+            context = PluginContext(AppConfig(), config, runner, store=store)  # type: ignore[arg-type]
+
+            first = plugin.generate_events(context)
+            second = plugin.generate_events(context)
+
+            self.assertEqual([event.subject_id for event in first], ["owner/repo#1"])
+            self.assertEqual(second, [])
+            self.assertEqual(
+                store.get_plugin_state(
+                    "issue_triage",
+                    "github_issue_triage:owner/repo:last_seen_updated_at",
+                ),
+                "2026-05-15T01:00:00Z",
+            )
+
+    def test_generate_events_allows_issue_newer_than_repo_update_watermark(self) -> None:
+        with tempfile.TemporaryDirectory() as tmp:
+            instructions = Path(tmp) / "triage.md"
+            instructions.write_text("Be concise.", encoding="utf-8")
+            config = _plugin_config(str(instructions))
+            plugin = create_plugin(config)
+            store = Store(Path(tmp) / "state.sqlite3")
+            store.set_plugin_state(
+                "issue_triage",
+                "github_issue_triage:owner/repo:last_seen_updated_at",
+                "2026-05-15T01:00:00Z",
+            )
+            runner = FakeRunner(
+                [
+                    {
+                        "number": 1,
+                        "title": "old",
+                        "body": "body",
+                        "labels": [],
+                        "updatedAt": "2026-05-15T01:00:00Z",
+                    },
+                    {
+                        "number": 2,
+                        "title": "new",
+                        "body": "body",
+                        "labels": [],
+                        "updatedAt": "2026-05-15T01:05:00Z",
+                    },
+                ]
+            )
+
+            events = plugin.generate_events(
+                PluginContext(AppConfig(), config, runner, store=store)  # type: ignore[arg-type]
+            )
+
+            self.assertEqual([event.subject_id for event in events], ["owner/repo#2"])
+            self.assertEqual(
+                store.get_plugin_state(
+                    "issue_triage",
+                    "github_issue_triage:owner/repo:last_seen_updated_at",
+                ),
+                "2026-05-15T01:05:00Z",
+            )
+
+    def test_generate_events_does_not_prescreen_by_default(self) -> None:
+        with tempfile.TemporaryDirectory() as tmp:
+            instructions = Path(tmp) / "triage.md"
+            instructions.write_text("Be concise.", encoding="utf-8")
+            config = _plugin_config(str(instructions))
+            plugin = create_plugin(config)
+            runner = FakeRunner(
+                [
+                    {
+                        "number": 1,
+                        "title": "new",
+                        "body": "body",
+                        "labels": [],
+                        "updatedAt": "2026-05-15T00:00:00Z",
+                    }
+                ]
+            )
+            pre_screener = FakePreScreener(False)
+
+            events = plugin.generate_events(
+                PluginContext(
+                    AppConfig(),
+                    config,
+                    runner,  # type: ignore[arg-type]
+                    pre_screener=pre_screener,
+                )
+            )
+
+            self.assertEqual(len(events), 1)
+            self.assertEqual(pre_screener.requests, [])
+
+    def test_generate_events_skips_prescreen_rejected_issues_when_enabled(self) -> None:
+        with tempfile.TemporaryDirectory() as tmp:
+            instructions = Path(tmp) / "triage.md"
+            instructions.write_text("Be concise.", encoding="utf-8")
+            config = _plugin_config(str(instructions), prescreen=True)
             plugin = create_plugin(config)
             runner = FakeRunner(
                 [
@@ -126,16 +235,18 @@ class GitHubIssueTriageTests(unittest.TestCase):
 
             self.assertEqual(events, [])
             self.assertEqual(len(pre_screener.requests), 1)
-            self.assertIn("owner/repo", pre_screener.requests[0].policy)
+            self.assertIn("repo", pre_screener.requests[0].policy)
+            self.assertNotIn("owner/repo", pre_screener.requests[0].policy)
             self.assertIn("cybersecurity", pre_screener.requests[0].policy)
 
-    def test_generate_events_includes_repository_prescreen_policy(self) -> None:
+    def test_generate_events_includes_repository_prescreen_policy_when_enabled(self) -> None:
         with tempfile.TemporaryDirectory() as tmp:
             instructions = Path(tmp) / "triage.md"
             instructions.write_text("Be concise.", encoding="utf-8")
             config = _plugin_config(
                 str(instructions),
                 prescreen_policy="Only automate parser issues.",
+                prescreen=True,
             )
             plugin = create_plugin(config)
             runner = FakeRunner(
@@ -161,6 +272,64 @@ class GitHubIssueTriageTests(unittest.TestCase):
             )
 
             self.assertIn("Only automate parser issues.", pre_screener.requests[0].policy)
+
+    def test_triage_prompt_blocks_inapplicable_or_abusive_issues(self) -> None:
+        with tempfile.TemporaryDirectory() as tmp:
+            instructions = Path(tmp) / "triage.md"
+            instructions.write_text("Be concise.", encoding="utf-8")
+            config = _plugin_config(str(instructions))
+            plugin = create_plugin(config)
+            runner = FakeRunner(
+                [
+                    {
+                        "number": 1,
+                        "title": "unrelated",
+                        "body": "rsyslog: what is the weather tomorrow?",
+                        "labels": [],
+                        "updatedAt": "2026-05-15T00:00:00Z",
+                    }
+                ]
+            )
+
+            events = plugin.generate_events(PluginContext(AppConfig(), config, runner))  # type: ignore[arg-type]
+
+            prompt = events[0].prompt
+            self.assertIn("Triage this GitHub issue for repo.", prompt)
+            self.assertIn("private gate decision", prompt)
+            self.assertIn("Set blocked=true", prompt)
+            self.assertIn("not about repo with high", prompt)
+            self.assertIn("weaponize cybersecurity weaknesses", prompt)
+            self.assertIn("Keep all gate/applicability reasoning only in `rationale`", prompt)
+            self.assertIn("answer the issue directly", prompt)
+            self.assertIn("Do not start with phrases like \"Triaged as\"", prompt)
+            self.assertIn("Write for the issue reporter", prompt)
+            self.assertIn("summarize publicly at module or component level", prompt)
+            self.assertIn("provide concrete user-facing configuration or usage", prompt)
+
+    def test_triage_prompt_can_use_configured_project_name_for_forks(self) -> None:
+        with tempfile.TemporaryDirectory() as tmp:
+            instructions = Path(tmp) / "triage.md"
+            instructions.write_text("Be concise.", encoding="utf-8")
+            config = _plugin_config(str(instructions), project_name="rsyslog")
+            plugin = create_plugin(config)
+            runner = FakeRunner(
+                [
+                    {
+                        "number": 1,
+                        "title": "weather",
+                        "body": "rsyslog: what is the weather tomorrow?",
+                        "labels": [],
+                        "updatedAt": "2026-05-15T00:00:00Z",
+                    }
+                ]
+            )
+
+            events = plugin.generate_events(PluginContext(AppConfig(), config, runner))  # type: ignore[arg-type]
+
+            prompt = events[0].prompt
+            self.assertIn("Triage this GitHub issue for rsyslog.", prompt)
+            self.assertIn("not about rsyslog with high", prompt)
+            self.assertNotIn("not about owner/repo", prompt)
 
     def test_generate_events_resolves_instruction_file_relative_to_config(self) -> None:
         with tempfile.TemporaryDirectory() as tmp:
@@ -481,6 +650,8 @@ def _plugin_config(
     sandbox: str | None = None,
     base_dir: Path | None = None,
     prescreen_policy: str | None = None,
+    prescreen: bool | None = None,
+    project_name: str | None = None,
 ) -> PluginConfig:
     repo_config = {
         "repo": "owner/repo",
@@ -496,6 +667,10 @@ def _plugin_config(
         repo_config["sandbox"] = sandbox
     if prescreen_policy is not None:
         repo_config["prescreen_policy"] = prescreen_policy
+    if prescreen is not None:
+        repo_config["prescreen"] = prescreen
+    if project_name is not None:
+        repo_config["project_name"] = project_name
     return PluginConfig(
         name="issue_triage",
         module="codex_bg.plugins.github_issue_triage",

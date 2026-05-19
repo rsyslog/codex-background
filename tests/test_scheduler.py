@@ -161,6 +161,33 @@ class SchedulerTests(unittest.TestCase):
 
             self.assertEqual(plugin.generate_calls, 2)
 
+    def test_force_once_runs_plugin_even_when_not_due(self) -> None:
+        with tempfile.TemporaryDirectory() as tmp:
+            plugin = MemoryPlugin()
+            module = types.ModuleType("test_memory_plugin_force")
+            module.create_plugin = lambda config: plugin
+            import sys
+
+            sys.modules["test_memory_plugin_force"] = module
+            app = AppConfig(
+                database_path=Path(tmp) / "state.sqlite3",
+                workdir_root=Path(tmp) / "workdirs",
+                codex=CodexConfig(),
+                plugins=[
+                    PluginConfig(
+                        name="memory",
+                        module="test_memory_plugin_force",
+                        interval_seconds=900,
+                    )
+                ],
+            )
+            scheduler = Scheduler(app, store=Store(app.database_path), runner=FakeRunner())  # type: ignore[arg-type]
+
+            scheduler.once()
+            scheduler.once(force=True)
+
+            self.assertEqual(plugin.generate_calls, 2)
+
     def test_failed_scheduled_plugin_run_records_attempt_for_backoff(self) -> None:
         with tempfile.TemporaryDirectory() as tmp:
             plugin = FailingPlugin()

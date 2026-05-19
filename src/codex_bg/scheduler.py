@@ -67,22 +67,23 @@ class Scheduler:
             for thread in threads:
                 thread.join(timeout=5)
 
-    def once(self) -> dict[str, Any]:
-        self.debug("running one scheduler cycle")
-        refreshed = self.refresh_workspaces()
-        generated = self.generate_events()
+    def once(self, *, force: bool = False) -> dict[str, Any]:
+        suffix = " with forced event generation" if force else ""
+        self.debug(f"running one scheduler cycle{suffix}")
+        refreshed = self.refresh_workspaces(force=force)
+        generated = self.generate_events(force=force)
         worked = self.work_one()
         self.debug(f"cycle complete: refreshed={refreshed} generated={generated} worked={worked}")
         return {"refreshed": refreshed, "generated": generated, "worked": worked}
 
-    def refresh_workspaces(self) -> int:
+    def refresh_workspaces(self, *, force: bool = False) -> int:
         self.debug("refreshing due shared workspaces")
-        return self.workspace_manager.refresh_due_workspaces()
+        return self.workspace_manager.refresh_due_workspaces(force=force)
 
-    def generate_events(self) -> int:
+    def generate_events(self, *, force: bool = False) -> int:
         count = 0
         for loaded in self.plugins.values():
-            if not self._plugin_due(loaded.config):
+            if not force and not self._plugin_due(loaded.config):
                 self.debug(f"plugin {loaded.config.name} is not due")
                 continue
             self.debug(f"generating events with plugin {loaded.config.name}")
@@ -184,6 +185,7 @@ class Scheduler:
             self.debug,
             self.notifier,
             self.pre_screener,
+            self.store,
         )
 
     def _submit_events(self, events: Iterable[Any]) -> int:

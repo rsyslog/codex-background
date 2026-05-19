@@ -57,6 +57,7 @@ reasoning_effort = "high"
 module = "codex_bg.prescreen_codex"
 model = "gpt-screen"
 reasoning_effort = "medium"
+timeout_seconds = 7
 custom_value = "kept"
 """,
                 encoding="utf-8",
@@ -69,6 +70,7 @@ custom_value = "kept"
         self.assertEqual(app.prescreen.module, "codex_bg.prescreen_codex")
         self.assertEqual(app.prescreen.model, "gpt-screen")
         self.assertEqual(app.prescreen.reasoning_effort, "medium")
+        self.assertEqual(app.prescreen.timeout_seconds, 7)
         self.assertEqual(app.prescreen.values, {"custom_value": "kept"})
 
 

@@ -20,6 +20,8 @@ def main(argv: list[str] | None = None) -> int:
         subparser.add_argument("--config", default=argparse.SUPPRESS)
         subparser.add_argument("--debug", action="store_true", default=argparse.SUPPRESS)
         subparser.add_argument("--dry-run", action="store_true", default=argparse.SUPPRESS)
+        if command == "once":
+            subparser.add_argument("--force", action="store_true")
     args = parser.parse_args(argv)
 
     app = load_config(args.config)
@@ -32,7 +34,7 @@ def main(argv: list[str] | None = None) -> int:
         scheduler.run_forever()
         return 0
     if args.command == "once":
-        print(json.dumps(scheduler.once(), indent=2, sort_keys=True))
+        print(json.dumps(scheduler.once(force=args.force), indent=2, sort_keys=True))
         return 0
     if args.command == "status":
         print(json.dumps(scheduler.status(), indent=2, sort_keys=True))
